@@ -1,0 +1,211 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="userFavourites_IN">
+	<!-- get the request url for error handling -->
+	 <property name="faultUrl" expression="get-property('To')"/>
+	<!-- get the requuest postfix -->
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+	<!-- Get the favourites API URI from synapse.xml -->
+	<property name="uri.var.uri" expression="get-property('uri_nds_favourites')" scope="default" type="STRING"/>
+	
+	<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+	<!-- Also derive derive the faultLang property -->
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<header name="lang" value="eng" scope="transport"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<header name="lang" value="ara" scope="transport"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+	<!-- remove the x-sirs-locale header parameter -->
+	<property action="remove" name="x-sirs-locale" scope="transport"/>
+	
+	<!-- determine the called API -->
+	<switch source="get-property('To')">					
+		<!-- Logic for delete user favourites -->
+		<case regex=".*/favourite/deleteUserFavourite?.*">
+			<payloadFactory media-type="json">
+                <format>{"Action" : "Delete"}</format>
+                <args/>
+            </payloadFactory>
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+				<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Mandatory header parameter not defined: x-sirs-sessionToken"}</format>
+                	<args/>
+            	</payloadFactory>
+            	<property name="HTTP_SC" value="400" scope="axis2"/>
+            	<loopback/>
+			</filter>
+			<!-- specifiy the API Name -->
+			<property name="faultApiName" value="nds_remove_fav"/>						
+			<!-- get the NDS Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			<!-- set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- adding the x-sirs-sessionToken as Authorization header if available -->
+			<header name="Authorization" expression="get-property('transport', 'x-sirs-sessionToken')" scope="transport"/>
+			<!-- send to the actual NDS Delete user favourites endpoint -->
+			<send blocking="true">
+                <endpoint>
+                    <http method="DELETE" uri-template="{+uri.var.base}{+uri.var.uri}/{+uri.var.userId}/{+uri.var.documentId}"/>
+                </endpoint>
+            </send>						
+		</case>
+		<!-- Logic for the add user favourites API -->
+		<case regex=".*/favourite/userFavourite?.*">
+			
+			<filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+				<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Mandatory header parameter not defined: x-sirs-sessionToken"}</format>
+                	<args/>
+            	</payloadFactory>
+            	<property name="HTTP_SC" value="400" scope="axis2"/>
+            	<loopback/>
+			</filter>
+			
+			<!-- specifiy the API Name -->
+			<property name="faultApiName" value="nds_add_fav"/>
+			
+			<property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN"/>
+			<!-- get the NDS Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			<!-- set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- adding the x-sirs-sessionToken as Authorization header if available -->
+			<header name="Authorization" expression="get-property('transport', 'x-sirs-sessionToken')" scope="transport"/>
+			<!-- get the documentId request query parameter --> 
+			<property name="uri.var.documentId" expression="$url:documentId"/>
+			<!-- check that the documentId parameter has been defined -->
+			<filter source="boolean(get-property('uri.var.documentId'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory request query parameters not defined: documentId"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+			</filter>
+			<!-- get the userId request query parameter -->
+			<property name="uri.var.userId" expression="$url:userId"/>
+			<!-- check that the userId parameter has been defined -->
+			<filter source="boolean(get-property('uri.var.userId'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory request query parameters not defined: userId"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+			</filter>
+            <!-- send to the actual NDS Delete user favourites endpoint -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?documentId={+uri.var.documentId}&amp;userId={+uri.var.userId}"/>
+                </endpoint>
+            </send>                            
+        </case>		
+		<!-- logic for get user favourites API -->		
+		<case regex=".*/favourite/getUserFavourite/.*">
+			<filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+				<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Mandatory header parameter not defined: x-sirs-sessionToken"}</format>
+                	<args/>
+            	</payloadFactory>
+            	<property name="HTTP_SC" value="400" scope="axis2"/>
+            	<loopback/>
+			</filter>
+			<!-- specifiy the API Name -->
+			<property name="faultApiName" value="nds_get_fav"/>
+			<!-- remove URL POSTFIX -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- adding the x-sirs-sessionToken as Authorization header if available -->
+			<header name="Authorization" expression="get-property('transport', 'x-sirs-sessionToken')" scope="transport"/>
+			<!-- get the NDS Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			<!-- send to the actual NDS get user favourites endpoint -->
+			<call blocking="true">
+                <endpoint>
+                    <http method="get" uri-template="{+uri.var.base}{+uri.var.uri}/{+uri.var.userId}"/>
+                </endpoint>
+            </call>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+				<then>
+					<property name="HTTP_SC" value="200" scope="axis2"/>							
+					<payloadFactory media-type="json">
+						<format>[]</format>												
+					</payloadFactory>						   
+					<respond/>
+				</then>
+			</filter>
+			<!-- check that the response from get user favourites API is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+				<then>
+					<!-- get the favourites response -->
+					<property name="uri.var.favouritesresponse" expression="json-eval($.)"/>
+					<send/>
+				</then>
+				<!-- Else, the get user favourites API has failed -->
+				<else>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to get user favourites"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</else>
+        	</filter>		
+		</case>
+		<case regex=".*/favourite/getUserFavouriteById/.*">
+			<filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+				<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Mandatory header parameter not defined: x-sirs-sessionToken"}</format>
+                	<args/>
+            	</payloadFactory>
+            	<property name="HTTP_SC" value="400" scope="axis2"/>
+            	<loopback/>
+			</filter>	
+			<!-- set content type, message types, remove postfix and disable chunking -->
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<header name="Authorization" expression="get-property('transport', 'x-sirs-sessionToken')" scope="transport"/>
+			<!-- get the NDS Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			<!-- get the NDS favourites endpoint uri -->
+			<property name="uri.var.favbyiduri" expression="get-property('uri_nds_favourites')" scope="default" type="STRING"/>
+			<!-- send to the actual NDS get user favourites endpoint -->
+			<call blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.favbyiduri}/documentId/{+uri.var.userId}"/>
+                </endpoint>
+            </call>
+            <!-- check if the response is empty, has status code 204 and return an empty array and status code 200 -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+				<then>
+					<property name="HTTP_SC" value="200" scope="axis2"/>							
+					<payloadFactory media-type="json">
+						<format>[]</format>												
+					</payloadFactory>						   
+					<respond/>
+				</then>
+			</filter>
+		</case>		
+		<default>
+			<payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/>
+            <loopback/>
+        </default>
+    </switch>	
+</sequence>

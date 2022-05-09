@@ -1,0 +1,47 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="SymphonySecurity_OUT">
+	<property name="faultUrl" expression="get-property('faultUrl')"/>
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+        <then>        
+        	<property name="error_message_1" expression="json-eval($.faultResponse.string)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = ''"/>
+        	<property name="error_message_2" expression="json-eval($.faultResponse.code)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = ''"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+					<sequence key="customErrorHandling"/>
+        		</then>
+					<else>      			
+					<filter regex="false" source="get-property('error_message_2_bool')">
+        				<then>
+        					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+							<sequence key="customErrorHandling"/>
+        				</then>
+        			</filter>
+					</else>					
+        	</filter>        	
+        </then>
+    </filter>
+		<filter source="get-property('axis2', 'HTTP_SC')" regex="400">
+        <then>        
+        	<property name="error_message_1" expression="json-eval($.statusMsg)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<property name="error_message_2" expression="json-eval($.statusCode)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+        		</then>
+					<else>      			
+					<filter regex="false" source="get-property('error_message_2_bool')">
+        				<then>
+        					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+        				</then>
+        			</filter>
+					</else>
+        	</filter>
+        	<sequence key="customErrorHandling"/>
+        </then>
+    </filter>
+	<send/>
+</sequence>

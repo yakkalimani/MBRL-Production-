@@ -1,0 +1,108 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="NDSRequests_IN">
+	<!-- Get the actual URI sent for the API request -->
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+    <!-- determine the fault langugage based on the value of x-sirs-locale parameter -->
+    <switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	<!-- Determine the actual uri for the request -->
+    <switch source="get-property('To')">
+    	<!-- Set the message type to application/json -->
+		<property name="messageType" value="application/json" scope="axis2" type="STRING"/>
+		<!-- Actual logic for Autostore requests -->
+		<case regex=".*/request.*">
+			<!-- JWT Validation -->
+			<sequence key="conf:/JWTValidation_IN.xml"/>
+			<!-- get the request json body parameters -->
+			<property description="uri.var.userid" expression="json-eval($.userId)" name="uri.var.userid" scope="default" type="STRING"/>
+			<property description="uri.var.itemid" expression="json-eval($.itemId)" name="uri.var.itemid" scope="default" type="STRING"/>
+			<property description="uri.var.priority" expression="json-eval($.priority)" name="uri.var.priority"/>
+			<!-- Check that the uri.var.userid parameter is null  -->
+            <filter source="get-property('uri.var.userid')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected parameter in request body: userid"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            <!-- Check that the uri.var.itemid parameter is null  -->
+            <filter source="get-property('uri.var.itemid')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected parameter in request body: itemid"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            <!-- Check that the uri.var.priority parameter is null  -->
+            <filter source="get-property('uri.var.priority')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected parameter in request body: priority"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- check that the JWT user id is equal to the passed user id -->
+            <property name="propertyCompare" expression="get-property('uri.var.jwtuserid') = get-property('uri.var.userid')" scope="default" type="BOOLEAN"/>
+            <switch source="get-property('propertyCompare')"> 
+         		<case regex="false"> 
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 401, "statusMsg" : "Unauthorized operation"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="401" scope="axis2"/>
+            		<loopback/>
+         		</case> 
+			</switch>
+            <!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			<!-- Run script mediator with Javascript to generate the CRU Create Patron XML payload -->
+            <script language="js" key="conf:/genSoapBodyNDSRequest.js" function="transform"/>
+            <!-- Set the message type to text/xml -->
+            <property name="messageType" value="text/xml" scope="axis2" type="STRING"/>
+            <!-- get the NDS Base URL -->
+            <property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+            <!-- get the auto request API URI -->
+            <property name="uri.var.uri" expression="get-property('uri_nds_autostoreRequests')" scope="default" type="STRING"/>
+            <!-- Set the SOAPAction header parameter to 2 double quotes -->
+            <header name="SOAPAction" value="&quot;&quot;" scope="transport"/>
+            <!-- Remove the request postfix before sending the API to NDS -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>	
+            <!-- Call the actual Symphony CRU create patron endpoint -->
+    		<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </send>
+        </case>
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args></args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>
+</sequence>

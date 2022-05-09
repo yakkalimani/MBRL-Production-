@@ -1,0 +1,736 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="SymphonyPatron_IN">
+    <!-- get the requuest postfix -->
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+    <!-- get the symphony base url property from Synapse.xml -->
+    <property name="uri.var.base" expression="get-property('base_url_symphony')" scope="default" type="STRING"/>
+    <!-- store the current request url into faultUrl used for error handling -->
+    <property name="faultUrl" expression="get-property('To')"/>
+    <!-- derive the lang and faultLang properties based on the value of x-sirs-locale header parameter -->
+    <switch source="get-property('transport', 'x-sirs-locale')">
+        <case regex="en_US|en">
+            <property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+            <property name="faultLang" value="en"/>
+        </case>
+        <case regex="ar_SA|ar">
+            <property name="uri.var.lang" value="ara" scope="default" type="STRING"/>
+            <property name="faultLang" value="ar"/>
+        </case>
+        <default>
+            <property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+            <property name="faultLang" value="en"/>
+        </default>
+    </switch>
+    <!-- check if the x-sirs-sessionToken parameter has been defined -->
+    <filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+        <then>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 400, "statusMsg" : "Missing header parameter: x-sirs-sessionToken"}</format>
+                <args></args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="400" scope="axis2"/>
+            <loopback/>
+        </then>
+    </filter>
+    <!-- determine the called uri, and based on it run the appropriate sequence logic -->
+    <switch source="get-property('axis2', 'REST_URL_POSTFIX')">
+    	<!-- Logic for Symphony Requests Info API -->
+         <case regex=".*/requests.*">
+        	<!-- JWT Validation -->
+			<sequence key="conf:/JWTValidation_IN.xml"/>
+			<!-- Get the userID request query parameter and store it in uri.var.userid property as a string -->
+        	<property description="uri.var.userid" expression="$url:userID" name="uri.var.userid" scope="default" type="STRING"/>
+			<!-- Check that the uri.var.userid parameter is null  -->
+            <filter source="boolean(get-property('uri.var.userid'))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter in request: userID"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- check that the JWT user id is equal to the passed user id -->
+            <property name="propertyCompare" expression="get-property('uri.var.jwtuserid') = get-property('uri.var.userid')" scope="default" type="BOOLEAN"/>
+            <switch source="get-property('propertyCompare')"> 
+         		<case regex="false"> 
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 401, "statusMsg" : "Unauthorized operation"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="401" scope="axis2"/>
+            		<loopback/>
+         		</case> 
+			</switch>
+			
+			<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+			
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- ################################################## -->
+			<!-- GET THE PRIVILAGED USER ADMIN SYMPHONY ACCESS TOKEN -->
+			<!-- ################################################## -->
+			
+			<property name="uri.var.symphlogin" expression="get-property('uri_nginx_symph_login')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin username -->
+			<property name="uri.var.symphuserid" expression="get-property('symphony_admin_userId')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin user password -->
+			<property name="uri.var.symphuserpass" expression="get-property('symphony_admin_password')" scope="default" type="STRING"/>
+			<!-- Make a call to get the symphony admin user access token -->
+
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			
+			<call blocking="true">
+        		<endpoint>
+            		<http method="GET" uri-template="{+uri.var.base}{+uri.var.symphlogin}?password={+uri.var.symphuserpass}&amp;json=true&amp;login={+uri.var.symphuserid}"/>
+        		</endpoint>
+    		</call>
+    		
+    		<property name="messageType" value="application/json" scope="axis2"/>
+           	
+           	<!-- Check that the response from call to Symphony login is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyToken" expression="json-eval($.sessionToken)" name="uri.var.stoken" scope="default" type="STRING"/>
+            	</then>
+            	<!-- Send error message if call to Symphony login fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the value of sessionToken is null -->
+            <filter source="get-property('uri.var.stoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Set message type to json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+
+         	<!-- Set the Symphony access token through the x-sirs-sessionToken header parameter -->
+            <header name="x-sirs-sessionToken" expression="get-property('uri.var.stoken')" scope="transport"/>>
+         	<!-- get the symphony lookup patron info uri -->
+         	<property name="uri.var.symphrequestsuri" expression="get-property('symphony_myRequests')" scope="default" type="STRING"/>
+         			
+         	<!-- Remove the url postfix from the request url -->
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	
+        	<call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.base}{+uri.var.symphrequestsuri}?userID={uri.var.userid}&amp;json=true"/>
+            	</endpoint>
+            </call>
+            
+            <!-- retrieve the fault code incase of a fault -->
+            <property description="uri.var.faultcode" expression="json-eval($.faultResponse.code)" name="uri.var.faultcode" scope="default" type="STRING"/>
+            
+        	 <!-- ############################################################## -->
+             <!-- ###### Check if the user has no current requests at all ###### -->
+             <!-- ############################################################## -->
+            
+             <filter source="get-property('uri.var.faultcode')" regex=".*noRequestFoun.*">
+             	<then>
+             		<payloadFactory media-type="json">
+                		<format>{"requestBrief": []}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="200" scope="axis2"/>
+            		<loopback/>
+             	</then>
+             </filter> 
+             
+             <!-- ############################################################## -->
+             <!-- check that the response to symphony requests API is successful -->
+             <!-- ############################################################## -->
+             
+             <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+                <then>  
+                    <!-- check if the API response contains the faultResponse.string element in the response payload -->
+                    <property name="error_message" expression="json-eval($.faultResponse)"/>
+                    <property name="error_message_bool" expression="get-property('error_message') = 'null'"/>
+                    <!-- if response has a $.faultResponse element, then just return the error response -->
+                    <filter regex="true" source="get-property('error_message_bool')">
+                        <then>
+                        	<!-- get the lookup patron info response -->
+                    		<property name="uri.var.patronrequestsresponse" expression="json-eval($.)"/>
+             			</then>
+             		</filter>
+             	</then>
+             	<else>
+             		<loopback/>
+             	</else>
+             </filter>
+             
+        	  <script language="js" key="conf:/getPatronRequestsTitleInfoReq.js" function="transform"/>
+        	  
+        	  <filter source="get-property('patronRequestsResult_str')" regex="success">
+                <then>
+                	
+                	<!-- set content type, message types, remove postfix -->
+                    <header name="Content-Type" value="application/json" scope="transport"/>
+                    <property name="messageType" value="application/json" scope="axis2"/>
+                    <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+                    <!-- Make a call to lookupTitleInfo at Symphony -->
+                    <call blocking="true">
+                        <endpoint>                           
+						   <http method="POST" uri-template="{+uri.var.base}/symws/rest/standard/lookupTitleInfo?{+uri.var.gentitleinforequest}"/>
+                        </endpoint>
+                    </call>
+                    <!-- get the lookup title info response and store it in property uri.var.titleInfoResponse -->
+                    <property name="uri.var.titleInfoResponse" expression="json-eval($.)"/>
+                    <!-- run a javascript to enrich the checkoutHistoryInfo section of lookupPatronInfo response -->
+                    <!-- By adding the title key for each element in that section -->    
+                </then>
+            </filter> 
+            
+            <!-- at this point, all is well and we are ready to call the get book image api -->
+            <!-- run a javascript to generate the image API request -->
+            <script language="js" key="conf:/genLookupPatronRequestsImageRequest.js" function="transform"/>
+            <!-- Check that the response of the script is successful -->
+            <filter source="get-property('result_str')" regex="success">
+                <then>
+                    <!-- remove the x-sirs-session-token header parameter -->
+                    <property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+                    <!-- get the WSO2 API Manager admin user consumer key -->
+                    <property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+                    <!-- get the WSO2 API Manager admin user consumer secret -->
+                    <property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+                    <!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+                    <property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+                    <!-- Base 64 encode the credentials and add "Basic" prefix. -->
+                    <property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+                    <!-- set the WSO2 Authorization header -->
+                    <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+                    <!-- Create request body for token API in x-www-form-urlencoded format -->
+                    <payloadFactory media-type="xml">
+                        <format>
+                            <soapenv:Envelope
+                                xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                                <soapenv:Body>
+                                    <root
+                                        xmlns="">
+                                        <grant_type>$1</grant_type>
+                                    </root>
+                                </soapenv:Body>
+                            </soapenv:Envelope>
+                        </format>
+                        <args>
+                            <arg value="client_credentials"/>
+                        </args>
+                    </payloadFactory>
+                    <property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+                    <property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+                    <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+                    <!-- Get the WSO@ token base url -->
+                    <property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+                    <!-- Get the wso2 token API uri -->
+                    <property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+                    <call blocking="true">
+                        <endpoint>
+                            <http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+                        </endpoint>
+                    </call>
+                    <!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+                    <property name="wso2_token" expression="//access_token/text()"/>
+                    <!-- get the WSO2 API Manager new OAuth token and set it to Authorization header -->
+                    <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+                    <!-- set content type, message types, remove postfix and disable chunking -->
+                    <header name="Content-Type" value="application/json" scope="transport"/>
+                    <property name="messageType" value="application/json" scope="axis2"/>
+                    <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+                    <property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+                    <!-- Create the request body for book image API -->
+                    <payloadFactory media-type="json">
+                        <format>$1</format>
+                        <args>
+                            <arg expression="get-property('genImageRequest')"/>
+                        </args>
+                    </payloadFactory>
+                    <!-- Get the wso2 API gateway base url -->
+                    <property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+                    <!-- get the image API uri on WSO2 -->
+                    <property name="uri.var.imageapiuri" expression="get-property('uri_wso2_nds_item_images')" scope="default" type="STRING"/>
+                    <!-- send to actual image API endpoint -->
+                    <call blocking="true">
+                        <endpoint>
+                            <http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.imageapiuri}/l"/>
+                        </endpoint>
+                    </call>
+                    <!-- Check that the response from image API is successful -->
+                    <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+                        <then>
+                            <!-- get the image API response -->
+                            <property name="uri.var.imageresponse" expression="json-eval($.)"/>
+                            <loopback/>
+                        </then>
+                        <else>
+                            <payloadFactory media-type="json">
+                                <format>{"statusCode": 400, "statusMsg" : "Failed to get Patron Requests Item Images."}</format>
+                                <args></args>
+                            </payloadFactory>
+                            <property name="HTTP_SC" value="400" scope="axis2"/>
+                            <loopback/>
+                        </else>
+                    </filter>
+                </then>
+            </filter> 
+        </case> 
+        <!-- logic for lookupPatronInfo -->
+        <case regex=".*/info?.*">
+            <!-- retuen an error is userID query parameter has not been defined -->
+            <filter source="boolean($url:userID)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: userID"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <!-- run a javascript to retrieve the query parameters on the sent request -->
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(6);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <!-- store the query parameters info uir.var.params property -->
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <!-- set content type, message types, remove postfix and disable chunking -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+            <!-- Get the uri for lookupPatronInfo enpoint and store it in uri.var.uri property -->
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_patinfo')" scope="default" type="STRING"/>
+            <!-- set the Accept header to all types -->
+            <header name="Accept" value="application/json" scope="transport"/>
+            <!-- call the actual lookupPatronInfo endpoint -->
+            <call blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </call>
+            <!-- check that the response from lookupPatronInfo API is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+                <then>
+                    <!-- get the lookup patron info response -->
+                    <property name="uri.var.patronInfoResponse" expression="json-eval($.)"/>
+                    <!-- check if the API response contains the faultResponse.string element in the response payload -->
+                    <property name="error_message" expression="json-eval($.faultResponse)"/>
+                    <property name="error_message_bool" expression="get-property('error_message') = 'null'"/>
+                    <!-- if response has a $.faultResponse element, then just return the error response -->
+                    <filter regex="false" source="get-property('error_message_bool')">
+                        <then>
+                            <payloadFactory media-type="json">
+                                <format>$1</format>
+                                <args>
+                                    <arg expression="get-property('uri.var.patronInfoResponse')"/>
+                                </args>
+                            </payloadFactory>
+                            <loopback/>
+                        </then>
+                    </filter>
+                </then>
+                <!-- else, the call to lookupPatronInfo returned a none 200 response, return an error back to client -->
+                <else>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "the API call to lookupPatronInfo has failed"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </else>
+            </filter>
+            
+            <!-- At this point, we check that the patron has some items in checkoutHistoryInfo -->
+            <!-- If so, we generate a request for lookupTitleInfo through a javascript -->
+            <script language="js" key="conf:/genCheckoutHistoryTitleInfoReq.js" function="transform"/>
+            <!-- Check that the outcome of the javascript is a success -->
+             <filter source="get-property('checkoutHisResult_str')" regex="success">
+                <then>
+                	<!-- set content type, message types, remove postfix -->
+                    <header name="Content-Type" value="application/json" scope="transport"/>
+                    <property name="messageType" value="application/json" scope="axis2"/>
+                    <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+                    <!-- Make a call to lookupTitleInfo at Symphony -->
+                    <call blocking="true">
+                        <endpoint>                           
+						   <http method="POST" uri-template="{+uri.var.base}/symws/rest/standard/lookupTitleInfo?{+uri.var.gentitleinforequest}"/>
+                        </endpoint>
+                    </call>
+                    <!-- get the lookup title info response and store it in property uri.var.titleInfoResponse -->
+                    <property name="uri.var.titleInfoResponse" expression="json-eval($.)"/>
+                    <!-- run a javascript to enrich the checkoutHistoryInfo section of lookupPatronInfo response -->
+                    <!-- By adding the title key for each element in that section -->
+                	<script language="js" key="conf:/enrichCheckoutHistoryInfo.js" function="transform"/>      
+                </then>
+            </filter>
+            
+            <!-- at this point, all is well and we are ready to parse the lookupPatronInfo response -->
+            <!-- and generate the book image API request -->
+            <!-- run a javascript to generate the image API request -->
+            <script language="js" key="conf:/genLookupPatronInfoImageRequest.js" function="transform"/>
+            <!-- Check that the response of the script is successful -->
+            <filter source="get-property('result_str')" regex="success">
+                <then>
+                    <!-- remove the x-sirs-session-token header parameter -->
+                    <property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+                    <!-- get the WSO2 API Manager admin user consumer key -->
+                    <property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+                    <!-- get the WSO2 API Manager admin user consumer secret -->
+                    <property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+                    <!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+                    <property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+                    <!-- Base 64 encode the credentials and add "Basic" prefix. -->
+                    <property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+                    <!-- set the WSO2 Authorization header -->
+                    <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+                    <!-- Create request body for token API in x-www-form-urlencoded format -->
+                    <payloadFactory media-type="xml">
+                        <format>
+                            <soapenv:Envelope
+                                xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                                <soapenv:Body>
+                                    <root
+                                        xmlns="">
+                                        <grant_type>$1</grant_type>
+                                    </root>
+                                </soapenv:Body>
+                            </soapenv:Envelope>
+                        </format>
+                        <args>
+                            <arg value="client_credentials"/>
+                        </args>
+                    </payloadFactory>
+                    <property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+                    <property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+                    <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+                    <!-- Get the WSO@ token base url -->
+                    <property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+                    <!-- Get the wso2 token API uri -->
+                    <property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+                    <call blocking="true">
+                        <endpoint>
+                            <http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+                        </endpoint>
+                    </call>
+                    <!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+                    <property name="wso2_token" expression="//access_token/text()"/>
+                    <!-- get the WSO2 API Manager new OAuth token and set it to Authorization header -->
+                    <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+                    <!-- set content type, message types, remove postfix and disable chunking -->
+                    <header name="Content-Type" value="application/json" scope="transport"/>
+                    <property name="messageType" value="application/json" scope="axis2"/>
+                    <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+                    <property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+                    <!-- Create the request body for book image API -->
+                    <payloadFactory media-type="json">
+                        <format>$1</format>
+                        <args>
+                            <arg expression="get-property('genImageRequest')"/>
+                        </args>
+                    </payloadFactory>
+                    <!-- Get the wso2 API gateway base url -->
+                    <property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+                    <!-- get the image API uri on WSO2 -->
+                    <property name="uri.var.imageapiuri" expression="get-property('uri_wso2_nds_item_images')" scope="default" type="STRING"/>
+                    <!-- send to actual image API endpoint -->
+                    <call blocking="true">
+                        <endpoint>
+                            <http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.imageapiuri}/l"/>
+                        </endpoint>
+                    </call>
+                    <!-- Check that the response from image API is successful -->
+                    <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+                        <then>
+                            <!-- get the image API response -->
+                            <property name="uri.var.imageresponse" expression="json-eval($.)"/>
+                            <loopback/>
+                        </then>
+                        <else>
+                            <payloadFactory media-type="json">
+                                <format>{"statusCode": 400, "statusMsg" : "Failed to get search item images."}</format>
+                                <args></args>
+                            </payloadFactory>
+                            <property name="HTTP_SC" value="400" scope="axis2"/>
+                            <loopback/>
+                        </else>
+                    </filter>
+                </then>
+            </filter>
+            <payloadFactory media-type="json">
+                <format>$1</format>
+                <args>
+                    <arg expression="get-property('uri.var.patronInfoResponse')"/>
+                </args>
+            </payloadFactory>
+            <loopback/>
+        </case>
+        <case regex=".*/hold/place?.*"> 
+		<!-- Commented as per Afnan that even pickupLibraryID -->
+            <!-- <filter source="boolean($url:pickupLibraryID)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: pickupLibraryID"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>  -->
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(12);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_place')" scope="default" type="STRING"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/hold/create?.*">
+            <filter source="boolean($url:pickupLibraryID)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: pickupLibraryID"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>                    
+                </then>
+            </filter>
+            <filter source="boolean($url:itemID)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: itemID"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(13);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_create')" scope="default" type="STRING"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/hold/modify?.*">
+            <filter source="boolean($url:holdKey)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: holdKey"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>                 
+                </then>
+            </filter>
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(13);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_modify')" scope="default" type="STRING"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/hold/suspend?.*">
+            <filter source="boolean($url:holdKey)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: holdKey"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <filter source="boolean($url:suspendStartDate)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: suspendStartDate"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(14);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_suspend')" scope="default" type="STRING"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/hold/unsuspend?.*">
+            <filter source="boolean($url:holdKey)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: holdKey"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(16);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_unsuspend')" scope="default" type="STRING"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/hold/cancel?.*">
+            <filter source="boolean($url:holdKey)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: holdKey"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(13);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_cancel')" scope="default" type="STRING"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN" />
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <call blocking="true">
+                <endpoint>
+                    <http method="get" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </call>
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+                <then>
+                    <property name="JSONResPayload" expression="json-eval($.)"/>
+                    <property name="JSONResPayload" expression="json-eval($.)"/>
+                    <filter source="get-property('JSONResPayload')" regex="true">
+                        <then>
+                            <payloadFactory media-type="json">
+                                <format>{  "statusType": true }</format>
+                            </payloadFactory>
+                            <respond/>
+                        </then>
+                        <else>
+                            <payloadFactory media-type="json">
+                                <format>{"statusCode": 400, "statusMsg" : "Oops something went wrong ! Try again later."}</format>
+                            </payloadFactory>
+                            <property name="HTTP_SC" value="400" scope="axis2"/>
+                            <loopback/>
+                        </else>
+                    </filter>
+                </then>
+            </filter>
+        </case>
+        <case regex=".*/checkout/renew?.*">
+            <filter source="boolean($url:itemID)" regex="false">
+                <then>
+                    <payloadFactory media-type="json">
+                        <format>{"statusCode": 400, "statusMsg" : "Missing query parameter: itemID"}</format>
+                        <args></args>
+                    </payloadFactory>
+                    <property name="HTTP_SC" value="400" scope="axis2"/>
+                    <loopback/>
+                </then>
+            </filter>
+            <script language="js">
+                <![CDATA[
+				   		var reqUri = mc.getProperty("requestURL");
+				   		var queryParams = String(reqUri).substr(16);
+				   		mc.setProperty("queryParams", queryParams);	 
+				   	]]>
+            </script>
+            <property name="uri.var.params" expression="get-property('queryParams')"/>
+            <property name="uri.var.uri" expression="get-property('uri_nginx_symph_renew')" scope="default" type="STRING"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args></args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/>
+            <loopback/>
+        </default>
+    </switch>
+</sequence>

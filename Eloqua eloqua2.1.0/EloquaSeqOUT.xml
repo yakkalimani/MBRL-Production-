@@ -1,0 +1,52 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="EloquaSeqOUT">
+    <switch source="get-property('URL_INFO')">
+        <case regex=".*/preference/updateUserPreferences?.*">
+            <script language="js">
+                <![CDATA[
+					var tempResponse = mc.getPayloadXML();
+					mc.setProperty("RESPONSE", tempResponse);
+				]]>     
+            
+            </script>
+            <property xmlns:ns="http://org.apache.synapse/xsd" name="ResponseToDecode" expression="base64Decode(get-property('RESPONSE'))" scope="default" type="STRING"/>
+            <script language="js">
+                <![CDATA[
+					var convertString=mc.getProperty("ResponseToDecode").toString();
+					var start = convertString.indexOf("<body>");
+					var end = convertString.indexOf("</body>");
+					if(start>0 & end >0)
+						mc.setPayloadJSON(convertString.substring(start+6,end));
+					else
+						mc.setPayloadJSON('{ "success": false, "message" : "Form Submission Unsuccessful"}');
+    
+				]]>
+            
+            </script>
+			<property name="status" expression="json-eval($.success)"/>
+            <filter source="get-property('status')" regex="false">
+				<then>
+					<property name="HTTP_SC" value="400" scope="axis2"/>
+					<property name="error_message_1" expression="json-eval($.message)"/>
+				</then>
+			</filter>
+        </case>
+		<case regex=".*/preference/getPreferences?.*|.*/campaign/getCampaignTargets">
+		    <filter source="get-property('axis2', 'HTTP_SC')" regex="^([3-9][0-9][0-9])$">
+				<then>
+					<property name="err_type" expression="json-eval($.[0].type)"/>
+					<property name="err_parameter" expression="json-eval($.[0].parameter)"/>
+					<property name="err_val" expression="json-eval($.[0].value)"/>
+					<property name="error_message_1" expression="concat(get-property('err_type'),': ',get-property('err_parameter'),'=',get-property('err_val'))"/>
+				</then>
+			</filter>
+        </case>
+    </switch>
+    <filter source="get-property('axis2', 'HTTP_SC')" regex="^([3-9][0-9][0-9])$">
+        <then>
+            <property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+			<sequence key="customErrorHandling"/>
+        </then>
+    </filter>
+	<property name="messageType" value="application/json" scope="axis2"/>
+    <send/>
+</sequence>

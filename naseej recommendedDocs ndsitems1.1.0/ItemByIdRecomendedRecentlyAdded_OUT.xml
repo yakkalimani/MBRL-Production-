@@ -1,0 +1,60 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="ItemByIdRecomendedRecentlyAdded_OUT">
+	<property expression="get-property('requestURL')" name="request" scope="transport" type="STRING"/>
+	<filter source="get-property('transport', 'request')" regex=".*/recentlyAdded.*">
+		 <then>
+		 	<script language="js" key="conf:/parseNDSRecentResponse110.js" function="transform"/>
+		 </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/recommended/groups?.*">
+		 <then>
+		 	<filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+            	<then>
+		 			<payloadFactory media-type="json">
+            			<format>{"dummy": "body"}</format>
+            			<args>
+            			</args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="200" scope="axis2"/>
+            	</then>
+            </filter>  
+            <script language="js" key="conf:/parseNDSRecommendedGroupsResponse110.js" function="transform"/>
+		 </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/recommended?.*">
+		 <then>
+		 	<script language="js" key="conf:/parseNDSRecommendedResponse110.js" function="transform"/>
+		 </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/item/.*">
+		 <then>
+		 	<property name="locationItemConfig" expression="get-property('registry','conf:/ndsLocationItems.xml')" scope="default" type="OM" />
+			<script language="js" key="conf:/parseNDSGetItemByIdResponse110.js" function="transform"/>
+		 </then>
+	</filter>
+
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+        <then>
+        	<send/>
+        </then>
+        <else>
+        	<property name="error_message_1" expression="json-eval($.statusMessage)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<property name="error_message_2" expression="json-eval($.statusMsg)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+        		</then>
+					<else>      			
+					<filter regex="false" source="get-property('error_message_2_bool')">
+        				<then>
+        					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>							
+        				</then>
+        			</filter>
+					</else>
+        	</filter>
+        	<sequence key="customErrorHandling"/>
+        </else>
+    </filter>
+	<send/>
+</sequence>

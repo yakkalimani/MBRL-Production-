@@ -1,0 +1,244 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="UAEPass_IN">
+	<!-- Get the request postfix and store it in requestURL parameter -->
+	<property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+	<!-- Get the base url for UAE Pass -->
+	<property name="uri.var.base" expression="get-property('base_url_uae_pass')" scope="default" type="STRING"/>
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	
+	<!-- derive the locale header parameter based on the passed x-sirs-locale header value -->
+			<switch source="get-property('transport', 'x-sirs-locale')">
+				<case regex="en_US|en">					
+					<property name="faultLang" value="en"/>
+				</case>
+				<case regex="ar_SA|ar">					
+					<property name="faultLang" value="ar"/>
+				</case>
+				<default>					
+					<property name="faultLang" value="en"/>
+				</default>
+			</switch>
+	
+	<!-- determine which API is being called and perform the required logic for that API -->
+	<switch source="get-property('To')">
+		<!-- if this is a call to the /token? UAE Pass API -->
+		<case regex=".*/token?.*">
+			
+			<!-- Get the client_type url parameter -->
+			<property expression="$url:client_type" name="ClientType" scope="default" type="STRING"/>
+			<!-- Based on the client-type parameter value, get the appropriate clientid and password for UAE Pass -->
+			<switch source="get-property('ClientType')">
+				<case regex=".*IOS.*|.*Android.*">
+					<property name="uae_pass_username" expression="get-property('uae_pass_mobile_clientId')" scope="default" type="STRING"/>
+					<property name="uae_pass_pass" expression="get-property('uae_pass_mobile_password')" scope="default" type="STRING"/>
+				</case>
+				<case regex=".*Portal.*">	
+					<property name="uae_pass_username" expression="get-property('uae_pass_web_clientId')" scope="default" type="STRING"/>
+					<property name="uae_pass_pass" expression="get-property('uae_pass_web_password')" scope="default" type="STRING"/>
+				</case>
+				<!-- if no valid client-type value was passed, then return a bad request -->
+				<default>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Invalid value for client_type query parameter. Expected IOS, Android or Portal"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+				</default>
+			</switch>
+			
+			<!-- Concatenate the username and password credentials into the "Credentails" variable -->
+			<property expression="fn:concat($ctx:uae_pass_username,':',$ctx:uae_pass_pass)" name="credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:credentials))" name="auth_header" scope="default" type="STRING"/>
+    		<!-- set the authentication header parameter -->
+    		<header name="Authorization" expression="get-property('auth_header')" scope="transport"/>
+    		<!-- Get the rediction url parameter -->
+    		<property expression="$url:redirect_uri" name="uri.var.red" scope="default" type="STRING"/>
+    		<!-- Get the code url parameter -->
+    		<property expression="$url:code" name="uri.var.code" scope="default" type="STRING"/>
+    		<!-- Set the FORCE_POST_PUT_NOBODY parameter so that the POST API can accept an empty body -->
+    		<property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN"/>
+    		<!-- Remove URL Postfix -->
+		   	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+		   	<!-- Get the UAE Pass URI for token API from Synaps.xml -->
+		   	<property name="uri.var.uaepasstokenuri" expression="get-property('uri_uae_pass_token')" scope="default" type="STRING"/>
+		   	
+		   	<!-- Check that the redirect_uri url parameter has been defined --> 
+            <filter source="boolean(get-property('uri.var.red'))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter not found: redirect_uri"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the code query param has been provided  -->
+            <filter source="boolean(get-property('uri.var.code'))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter not found: code"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+		   	
+		   	<!-- Call the actual UAE Pass Token endpoint -->
+    		<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uaepasstokenuri}?grant_type=authorization_code&amp;redirect_uri={+uri.var.red}&amp;code={+uri.var.code}"/>
+                </endpoint>
+            </send>
+            <respond/>
+    	</case>
+    	<case regex=".*/getUserResource">
+    		<!-- Set the Accept header parameter -->
+        	<header name="Accept" value="*/*" scope="transport"/>
+            <!-- Retreive the "auth" header parameter -->
+            <property expression="get-property('transport', 'auth')" name="auth" scope="default" type="STRING"/>
+			<!-- Set the Authorization header parameter to the value of "auth" parameter. -->
+			<property expression="get-property('auth')" name="Authorization" scope="transport" type="STRING"/>
+			<!-- Remove the "auth" header parameter -->
+			<property action="remove" name="auth" scope="transport"/>
+			<!-- Get the UAE Pass URI for user details API from Synaps.xml -->
+		   	<property name="uri.var.uaepassuseruri" expression="get-property('uri_uae_pass_userdetails')" scope="default" type="STRING"/>	
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uaepassuseruri}"/>
+            	</endpoint>
+            </send>                           			
+        </case>
+        <!-- if this is a call to the /authenticate? UAE Pass API -->
+		<case regex=".*/authenticate?.*">
+			
+			<!-- Get the client_type url parameter -->
+			<property expression="$url:client_type" name="ClientType" scope="default" type="STRING"/>
+			<!-- Based on the client-type parameter value, get the appropriate clientid and password for UAE Pass -->
+			<switch source="get-property('ClientType')">
+				<case regex=".*IOS.*|.*Android.*">
+					<property name="uae_pass_username" expression="get-property('uae_pass_mobile_clientId')" scope="default" type="STRING"/>
+					<property name="uae_pass_pass" expression="get-property('uae_pass_mobile_password')" scope="default" type="STRING"/>
+				</case>
+				<case regex=".*Portal.*">	
+					<property name="uae_pass_username" expression="get-property('uae_pass_web_clientId')" scope="default" type="STRING"/>
+					<property name="uae_pass_pass" expression="get-property('uae_pass_web_password')" scope="default" type="STRING"/>
+				</case>
+				<!-- if no valid client-type value was passed, then return a bad request -->
+				<default>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Invalid value for client_type query parameter. Expected IOS, Android or Portal"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+				</default>
+			</switch>
+			
+			<payloadFactory media-type="json">
+            	<format>{"Dummy Body": "Dummy Body"}</format>
+            	<args/>
+            </payloadFactory>
+            		
+			<!-- Concatenate the username and password credentials into the "credentials" variable -->
+			<property expression="fn:concat($ctx:uae_pass_username,':',$ctx:uae_pass_pass)" name="credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:credentials))" name="auth_header" scope="default" type="STRING"/>
+    		<!-- set the authentication header parameter -->
+    		<header name="Authorization" expression="get-property('auth_header')" scope="transport"/>
+    		<!-- Get the rediction url parameter -->
+    		<property expression="$url:redirect_uri" name="uri.var.red" scope="default" type="STRING"/>
+    		<!-- Get the code url parameter -->
+    		<property expression="$url:code" name="uri.var.code" scope="default" type="STRING"/>
+    		<!-- Set the FORCE_POST_PUT_NOBODY parameter so that the POST API can accept an empty body -->
+    		<property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN"/>
+    		<!-- Remove URL Postfix -->
+		   	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+		   	<!-- Get the UAE Pass URI for token API from Synaps.xml -->
+		   	<property name="uri.var.uaepasstokenuri" expression="get-property('uri_uae_pass_token')" scope="default" type="STRING"/>
+		   	<!-- set the messageType to application/json -->
+		   	<property name="messageType" value="application/json" scope="axis2"/>
+		   	
+		   	<!-- Check that the redirect_uri url parameter has been defined --> 
+            <filter source="boolean(get-property('uri.var.red'))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter not found: redirect_uri"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the code query param has been provided  -->
+            <filter source="boolean(get-property('uri.var.code'))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter not found: code"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+		   	
+		   	<!-- Call the actual UAE Pass Token endpoint -->
+    		<call blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uaepasstokenuri}?grant_type=authorization_code&amp;redirect_uri={+uri.var.red}&amp;code={+uri.var.code}"/>
+                </endpoint>
+            </call>
+            <!-- Get The access token response property -->
+            <property description="UAE_Pass_Access_Token" expression="json-eval($.access_token)" name="uri.var.accesstoken" scope="default" type="STRING"/>
+             <!-- Check that the value of access_token property is null -->
+            <filter source="get-property('uri.var.accesstoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid UAE Pass access token"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            <!--remove previous authorization header -->
+            <property action="remove" name="Authorization" scope="transport"/>
+            <!-- Set the Accept header parameter -->
+        	<header name="Accept" value="*/*" scope="transport"/>
+            <!-- Derive the value of the auth_header parameter as "Bearer " + UAE Pass access token -->
+            <property expression="fn:concat('Bearer ', $ctx:uri.var.accesstoken)" name="auth_header" scope="default" type="STRING"/>
+			<!-- Set the Authorization header parameter to the value of "auth_header" parameter. -->
+			<property expression="get-property('auth_header')" name="Authorization" scope="transport" type="STRING"/>
+			<!-- Get the UAE Pass URI for user details API from Synaps.xml -->
+		   	<property name="uri.var.uaepassuseruri" expression="get-property('uri_uae_pass_userdetails')" scope="default" type="STRING"/>	
+            <call blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uaepassuseruri}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response from UAE Pass user details is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="UAE_Pass_Payload" expression="json-eval($.)" name="uri.var.uaepassuserpayload" scope="default" type="STRING"/>
+            		<property action="remove" name="Authorization" scope="transport"/>
+            	</then>
+            	<!-- Send error message if call to UAE Pass user details API fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain authenticated UAE Pass user details"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter> 
+            <script language="js" key="conf:/uaePassFormatResponse.js" function="transform"/>  
+            <respond/>      
+    	</case>
+        <default>
+        	<payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>
+</sequence>

@@ -1,0 +1,644 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="CRU_IN">
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+    <switch source="get-property('To')">
+		<property name="messageType" value="application/json" scope="axis2" type="STRING"/>
+		<case regex=".*/patron/create.*">
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			<!-- Get the current JSON request payload and store it in "requestPayload" variable -->
+			<property description="requestPayload" expression="json-eval($.)" name="Request_Payload" scope="default" type="STRING"/>
+			<!-- Run script mediator with Javascript to generate the CRU Create Patron XML payload -->
+            <script language="js" key="conf:/genSoapBody.js" function="transform"/>
+            <!-- Set the message type to text/xml -->
+            <property name="messageType" value="text/xml" scope="axis2" type="STRING"/>
+            <!-- get the CRU Base URL -->
+            <property name="uri.var.base" expression="get-property('base_url_cru')" scope="default" type="STRING"/>
+            <!-- get the CRU URI -->
+            <property name="uri.var.uri" expression="get-property('uri_cru')" scope="default" type="STRING"/>
+            <!-- get the CRU create patron soap action parameter -->
+            <property name="uri.var.soapaction" expression="get-property('soap_action_cru_create')" scope="default" type="STRING"/>
+            <!-- Set the SOAPAction header parameter to "http://tempuri.org/IPatrons/CreatePatron" -->
+            <header name="SOAPAction" expression="get-property('uri.var.soapaction')" scope="transport"/>
+            <!-- Remove the request postfix before sending the API to NDS -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>	
+            <!-- Call the actual Symphony CRU create patron endpoint -->
+    		<call blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </call>
+            <loopback/>
+        </case>
+        
+        <!-- *************************************** -->  
+		<!-- *** LOGIC FOR CRU UPDATE PATRON API *** -->
+		<!-- *************************************** -->
+        
+        <case regex=".*/patron/update.*">
+        
+        	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+        
+        	<!-- Get the request JSON body parameters -->
+			<property name="uri.var.emailaddress" expression="json-eval($.EmailAddress)"/>
+			<property name="uri.var.mobile" expression="json-eval($.Addresses1_Mobile)"/>
+			
+			<!-- ************************************************* -->  
+			<!-- *** Validate the request json body parameters *** -->
+			<!-- ************************************************* -->
+			<!-- Check that the username parameter is null  -->
+
+            
+            <!-- Check that the claimuri parameter is null  -->
+            <filter source="boolean(get-property('uri.var.mobile'))" regex="false">
+            	<then>
+            	</then>
+            	<else>
+            		<filter source="boolean(get-property('uri.var.emailaddress'))" regex="false">
+            			<then>
+            				<payloadFactory media-type="json">
+                			<format>{"statusCode": 400, "statusMsg" : "Expected EmailAddress parameter in request body"}</format>
+                			<args/>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            			</then>
+            		</filter>
+            	</else>
+            </filter>
+			
+        	<!-- Check that the userID request json body parameter is defined and that it consists of only numbers, uppercase letters or lowercase letters -->
+        	<filter source="json-eval($.UserID)" regex="[A-Za-z0-9_]{2,12}">
+        		<then>
+        			<!-- Get the userID request json body parameter and store it in uri.var.userid property as a string -->
+        			<property description="uri.var.userid" expression="json-eval($.UserID)" name="uri.var.userid" scope="default" type="STRING"/>
+        		</then>
+        		<!-- else return a 400 BAD REQUEST exception back to the client -->
+        		<else>
+        			<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "invalid userID value was provided."}</format>
+                	<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+        		</else>
+        	</filter>
+        	
+        	<!-- ************************************************* -->  
+			<!-- *********** STORE ORIGINAL PAYLOAD ************** -->
+			<!-- ************************************************* -->
+        	
+        	<!-- Get the current JSON request payload and store it in "requestPayload" variable -->
+			<property description="requestPayload" expression="json-eval($.)" name="Request_Payload" scope="default" type="STRING"/>
+        	
+        	<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+        	
+        	<!-- ************************************************* -->  
+			<!-- *************** JWT VALIDATION ****************** -->
+			<!-- ************************************************* -->
+			
+        	<!-- JWT Validation -->
+			<sequence key="conf:/JWTValidation_IN.xml"/>
+			
+			<!-- check that the JWT user id is equal to the passed user id -->
+            <property name="propertyCompare" expression="get-property('uri.var.jwtuserid') = get-property('uri.var.userid')" scope="default" type="BOOLEAN"/>
+            <switch source="get-property('propertyCompare')"> 
+         		<case regex="false"> 
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 401, "statusMsg" : "Unauthorized operation"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="401" scope="axis2"/>
+            		<loopback/>
+         		</case> 
+			</switch>
+			
+			<!-- ********************************** -->  
+			<!-- **** GET WSO2 AM ACCESS TOKEN **** -->
+			<!-- ********************************** -->
+			
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	
+         	<!-- Get the WSO2 token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	<!-- Remove the Authorization header -->
+        	<property action="remove" name="Authorization" scope="transport"/>
+        	
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            
+            <!-- *********************************************** -->  
+			<!-- **** CALL WSO2 IS SET USER CLAIM VALUE API **** -->
+			<!-- *********************************************** -->
+            
+            <filter source="boolean(get-property('uri.var.mobile'))" regex="false">
+            	<then>
+            	</then>
+            	<else>
+            		<property name="messageType" value="application/json" scope="axis2" type="STRING"/>
+            		<!-- Remove the request postfix before sending the API to NDS -->
+		    		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+		    		<!-- Construct the JSON request body for set user claims value API -->
+		    		<payloadFactory media-type="json">
+                	<format>
+                	{
+    					"username" : "$1",
+    					"claimURI" : "$2",
+    					"claimValue" : "$3"
+					}
+					</format>
+                	<args>
+                		<arg expression="get-property('uri.var.emailaddress')"/>
+            			<arg value="http://wso2.org/claims/mobile"/>
+            			<arg expression="get-property('uri.var.mobile')"/>
+                	</args>
+            		</payloadFactory>
+		    		<!-- Get the wso2 API gateway base url -->
+         			<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+					<!-- Get the wso2 generate payment token API uri -->
+					<property name="uri.var.amsetuserclaimuri" value="/identity/security/1.1.0/user/setClaim" scope="default" type="STRING"/>
+			
+					<call blocking="true">
+						<endpoint>
+							<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.amsetuserclaimuri}"/>
+						</endpoint>
+					</call>
+			
+					<!-- Check that the response of the API is "Accepted" -->
+					<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+						<then>
+							<property action="remove" name="Authorization" scope="transport"/>
+							<property action="remove" name="Cookie" scope="transport"/>
+						</then>
+						<!-- Send error message if the API call has failed -->
+						<else>
+							<payloadFactory media-type="json">
+								<format>{"statusCode": 500, "statusMsg" : "Failed to update user data in Active Directory"}</format>
+								<args/>
+							</payloadFactory>
+							<property name="HTTP_SC" value="500" scope="axis2"/>
+							<loopback/>
+						</else>
+					</filter>
+				</else>
+			</filter>
+            
+            <!-- ******************************************* -->  
+			<!-- ******* CALL CRU UPDATE PATRON API ******** -->
+			<!-- ******************************************* -->
+            
+           <!-- Run script mediator with Javascript to generate the CRU Update Patron XML payload -->
+		   <script language="js" key="conf:/genSoapBodCruUpdate.js" function="transform"/>
+			
+		   <!-- Remove the request postfix  before sending the API to NDS -->
+		   <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>	
+		   <!-- Set the message type to text/xml -->
+		   <property name="messageType" value="text/xml" scope="axis2" type="STRING"/>
+		   <!-- get the CRU Base URL -->
+		   <property name="uri.var.base" expression="get-property('base_url_cru')" scope="default" type="STRING"/>
+		   <!-- get the CRU URI -->
+		   <property name="uri.var.uri" expression="get-property('uri_cru')" scope="default" type="STRING"/>
+		   <!-- get the CRU create patron soap action parameter -->
+		   <property name="uri.var.soapaction" expression="get-property('soap_action_cru_update')" scope="default" type="STRING"/>
+		   <!-- Set the SOAPAction header parameter to "http://tempuri.org/IPatrons/UpdatePatron" -->
+		   <header name="SOAPAction" expression="get-property('uri.var.soapaction')" scope="transport"/>
+   		   <property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+   		   <log level="custom">
+   		 		<property name="debug_uri" expression="get-property('uri.var.uri')"/>
+   		 		<property name="debug_base" expression="get-property('uri.var.base')"/> 
+   		   </log>
+   		   
+		   <!-- Call the actual Symphony CRU update patron endpoint -->
+		   <call blocking="true">
+				<endpoint>
+					<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+				</endpoint>
+		   </call>
+		   <respond/>					
+        </case>
+        <case regex=".*/patron/extendedInfo?.*">
+        	<!-- Check that the searchValue request query parameter (userID) is defined and that it consists of only numbers, uppercase letters or lowercase letters -->
+        	<filter source="$url:searchValue" regex="[A-Za-z0-9_]{2,12}">
+        		<then>
+        			<!-- Get the searchValue request query parameter and store it in uri.var.userid property as a string -->
+        			<property description="uri.var.userid" expression="$url:searchValue" name="uri.var.userid" scope="default" type="STRING"/>
+        		</then>
+        		<!-- else return a 400 BAD REQUEST exception back to the client -->
+        		<else>
+        			<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "invalid searchValue query parameter value was provided."}</format>
+                	<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+        		</else>
+        	</filter>
+        	<!-- check whether the x-sirs-sessionToken has been defined -->
+    		<filter source="boolean(get-property('transport', 'x-sirs-sessionToken'))" regex="true">
+    			<then>
+    				<!-- retrieve the value of x-sirs-sessionToken parameter into uri.var.isidtoken property -->
+    				<property description="uri.var.isidtoken" name="uri.var.isidtoken" expression="get-property('transport', 'x-sirs-sessionToken')"/>
+    				<!-- run a script to extract the user claims portion of the JWT --> 
+    				<script language="js" key="conf:/extractUserClaimsFromJwtToken.js" function="transform"/>
+            		<!-- check that the JWT extraction javascript has run successfully.-->
+            		<filter source="get-property('jwt_result')" regex="success">
+						<then>
+            				<!-- incase of javascript running successfully, based 64 decode the user cliams -->
+            				<property expression="base64Decode($ctx:uri.var.tokenidclaims)" name="uri.var.decodedtokenidclaims" scope="default" type="STRING"/>
+    						<!-- run a script to check that the provided userId is equal to the userId in the JWT --> 
+    						<script language="js" key="conf:/validateJwtToken.js" function="transform"/>
+    						<!-- Check the outcome of the jwt validation. If failed, return an error response back to the client.-->
+    						<filter source="get-property('jwt_validate_result')" regex="success">
+								<then>
+									
+								</then>
+								<else>
+									<payloadFactory media-type="json">
+                					<format>{"statusCode": 401, "statusMsg" : "$1" }</format>
+                					<args>
+                						<arg expression="get-property('jwt_validate_result')"/>
+                					</args>
+            						</payloadFactory>
+            						<property name="HTTP_SC" value="401" scope="axis2"/>
+            						<loopback/>
+								</else>
+							</filter>
+    					</then>
+    					<else>
+    						<!-- incase of javascript failing, return an error back to the client -->
+    						<payloadFactory media-type="json">
+                			<format>{"statusCode": 401, "statusMsg" : "invalid x-sirs-sessionToken header value passed"}</format>
+                			<args/>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="401" scope="axis2"/><loopback/>
+    					</else>
+    				</filter>
+    			</then>
+    		</filter>
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- Get the query parameters from the request -->
+			<property expression="$url:searchField" name="uri.var.searchField" scope="default" type="STRING"/>
+    		<property expression="$url:searchType" name="uri.var.searchType" scope="default" type="STRING"/>
+    		<property expression="$url:searchValue" name="uri.var.searchValue" scope="default" type="STRING"/>
+            
+             <!-- Check that the SearchValue query param has been provided  -->
+            <filter source="boolean(get-property('uri.var.searchValue'))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter not found: searchValue"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+			<!-- Run script mediator with Javascript to generate the CRU Update Patron XML payload -->
+            <script language="js" key="conf:/genSoapBodCruSearch.js" function="transform"/>
+            <!-- Set the message type to text/xml -->
+            <property name="messageType" value="text/xml" scope="axis2" type="STRING"/>
+            <!-- get the CRU Base URL -->
+            <property name="uri.var.base" expression="get-property('base_url_cru')" scope="default" type="STRING"/>
+            <!-- get the CRU URI -->
+            <property name="uri.var.uri" expression="get-property('uri_cru')" scope="default" type="STRING"/>
+            <!-- get the CRU create patron soap action parameter -->
+            <property name="uri.var.soapaction" expression="get-property('soap_action_cru_search')" scope="default" type="STRING"/>
+            <!-- Set the SOAPAction header parameter to "http://tempuri.org/IPatrons/Search" -->
+            <header name="SOAPAction" expression="get-property('uri.var.soapaction')" scope="transport"/>
+            <!-- Remove the request postfix before sending the API to NDS -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>	
+            <!-- Call the actual Symphony CRU update patron endpoint -->
+    		<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/getLookups?.*">
+        	<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+			<switch source="get-property('transport', 'x-sirs-locale')">
+				<case regex="en_US|en">
+					<property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+					<property name="faultLang" value="en"/>
+				</case>
+				<case regex="ar_SA|ar">
+					<property name="uri.var.lang" value="ara" scope="default" type="STRING"/>
+					<property name="faultLang" value="ar"/>
+				</case>
+				<default>
+					<property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+					<property name="faultLang" value="en"/>
+				</default>
+			</switch>				
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- Get the query parameters from the request -->
+			<property expression="$url:Field" name="uri.var.field" scope="default" type="STRING"/>
+			
+			
+             <!-- Check that the field query param has been provided  -->
+            <filter source="boolean(get-property('uri.var.field'))" regex="false">
+            	<then>
+            		<cache collector="false" timeout="10000">
+        	 			<onCacheHit>        	 				
+               				<respond/>
+            			</onCacheHit>
+            			<protocol type="HTTP">
+               				<methods>GET</methods>
+               				<headersToExcludeInHash/>
+               				<responseCodes>200</responseCodes>
+               				<enableCacheControl>false</enableCacheControl>
+               				<includeAgeHeader>false</includeAgeHeader>
+               				<hashGenerator>org.wso2.carbon.mediator.cache.digest.DOMHASHGenerator</hashGenerator>
+            			</protocol>
+            			<implementation maxSize="10000"/>
+         			</cache>
+            		<!-- get the WSO2 API Manager admin user consumer key -->
+    				<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    				<!-- get the WSO2 API Manager admin user consumer secret -->
+    				<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    				<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+					<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    				<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    				<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    				<!-- set the WSO2 Authorization header -->
+            		<header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           			<!-- Create request body for token API in x-www-form-urlencoded format -->
+           			<payloadFactory media-type="xml">
+            		<format>
+               			<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  		<soapenv:Body>
+                     	<root xmlns="">
+                        <grant_type>$1</grant_type>
+                     	</root>
+                  		</soapenv:Body>
+               			</soapenv:Envelope>
+            		</format>
+            		<args>
+            	 		<arg value="client_credentials"/>
+            		</args>
+         			</payloadFactory>
+         			<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         			<!-- Get the WSO@ token base url -->
+         			<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         			<!-- Get the wso2 token API uri -->
+         			<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         			<call blocking="true">
+            			<endpoint>
+                			<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            			</endpoint>
+        			</call>
+        			<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        			<property name="wso2_token" expression="//access_token/text()"/>
+        			
+        			<!-- At this point, we are ready to call DSG generatePaymentToken API -->
+            		<header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            		<header name="Content-Type" value="application/json" scope="transport"/>
+            		<property name="messageType" value="application/json" scope="axis2"/>
+            		
+            		<!-- Get the wso2 API gateway base url -->
+         			<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+         			
+         			<!-- ############################ ENGLISH LOOKUPS #################################### -->
+					<header name="x-sirs-locale" value="en" scope="transport" action="set"/>
+            		<property name="faultLang" expression="get-property('x-sirs-locale')"/>
+            		<!-- ####### Logic for Language lookup in English ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Language"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_lang_eng" expression="json-eval($.)" name="cru_lookup_lang_eng"/>            			
+            		
+            		<!-- ####### Logic for User Category 5 lookup in English ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=UserCategory5"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_uc5" expression="json-eval($.)" name="cru_lookup_uc5_eng"/>            			
+            		
+            		<!-- ####### Logic for User Category 6 lookup in English ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=UserCategory6"/>
+                		</endpoint>
+            		</call>	
+					<property description="cru_lookup_uc6" expression="json-eval($.)" name="cru_lookup_uc6_eng"/>            			
+            		
+            		<!-- ####### Logic for User Category 7 lookup in English ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=UserCategory7"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_uc7" expression="json-eval($.)" name="cru_lookup_uc7_eng"/>   
+					
+					<!-- ####### Logic for Nationality lookup in English ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Nationality"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_nationality_eng" expression="json-eval($.)" name="cru_lookup_nationality_eng"/> 
+					
+					<!-- ####### Logic for Preferred Language lookup in English ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=PreferredLanguage"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_preflang_eng" expression="json-eval($.)" name="cru_lookup_preflang_eng"/>
+					
+					<!-- ####### Logic for Gender lookup in English ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Gender"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_gender_eng" expression="json-eval($.)" name="cru_lookup_gender_eng"/>
+					
+					<!-- ####### Logic for Profile lookup in English ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Profile"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_profile_eng" expression="json-eval($.)" name="cru_lookup_profile_eng"/>
+					
+					<!-- ############################ ARABIC LOOKUPS #################################### -->
+					<header name="x-sirs-locale" value="ar" scope="transport" action="set"/>
+            		<property name="faultLang" expression="get-property('x-sirs-locale')"/>
+            		<!-- ####### Logic for Language lookup in Arabic ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Language"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_lang_ara" expression="json-eval($.)" name="cru_lookup_lang_ara"/>            			
+            		
+            		<!-- ####### Logic for User Category 5 lookup in Arabic ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=UserCategory5"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_uc5_ara" expression="json-eval($.)" name="cru_lookup_uc5_ara"/>            			
+            		
+            		<!-- ####### Logic for User Category 6 lookup in Arabic ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=UserCategory6"/>
+                		</endpoint>
+            		</call>	
+					<property description="cru_lookup_uc6_ara" expression="json-eval($.)" name="cru_lookup_uc6_ara"/>            			
+            		
+            		<!-- ####### Logic for User Category 7 lookup in Arabic ####### -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=UserCategory7"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_uc7_ara" expression="json-eval($.)" name="cru_lookup_uc7_ara"/>   
+					
+					<!-- ####### Logic for Nationality lookup in Arabic ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Nationality"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_nationality_ara" expression="json-eval($.)" name="cru_lookup_nationality_ara"/> 
+					
+					<!-- ####### Logic for Preferred Language lookup in Arabic ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=PreferredLanguage"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_preflang_ara" expression="json-eval($.)" name="cru_lookup_preflang_ara"/>
+					
+					<!-- ####### Logic for Gender lookup in Arabic ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Gender"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_gender_ara" expression="json-eval($.)" name="cru_lookup_gender_ara"/>  
+					
+					<!-- ####### Logic for Profile lookup in Arabic ####### -->
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    				<call blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.amgatewaybase}/symphony/crud/1.1.0/getLookups?Field=Profile"/>
+                		</endpoint>
+            		</call>
+					<property description="cru_lookup_profile_ara" expression="json-eval($.)" name="cru_lookup_profile_ara"/>                  			
+            	</then>
+            	<else>
+					<!-- Run script mediator with Javascript to generate the CRU Update Patron XML payload -->
+            		<script language="js" key="conf:/genSoapBodCruLookups.js" function="transform"/>
+            		<!-- Set the message type to text/xml -->
+            		<property name="messageType" value="text/xml" scope="axis2" type="STRING"/>
+            		<!-- get the CRU Base URL -->
+            		<property name="uri.var.base" expression="get-property('base_url_cru')" scope="default" type="STRING"/>
+            		<!-- get the CRU URI -->
+            		<property name="uri.var.uri" expression="get-property('uri_cru')" scope="default" type="STRING"/>
+            		<!-- get the CRU create patron soap action parameter -->
+            		<property name="uri.var.soapaction" expression="get-property('soap_action_cru_lookups')" scope="default" type="STRING"/>
+            		<!-- Set the SOAPAction header parameter to "http://tempuri.org/IPatrons/Search" -->
+            		<header name="SOAPAction" expression="get-property('uri.var.soapaction')" scope="transport"/>
+            		<!-- Remove the request postfix before sending the API to NDS -->
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>	
+            		<!-- Call the actual Symphony CRU update patron endpoint -->
+    				<send blocking="true">
+                		<endpoint>
+                    		<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                		</endpoint>
+            		</send>
+            	</else>
+            </filter>
+        </case>
+				
+		
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>
+</sequence>

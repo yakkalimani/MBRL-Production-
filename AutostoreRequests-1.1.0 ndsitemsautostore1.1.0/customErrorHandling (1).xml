@@ -1,0 +1,36 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="customErrorHandling">
+    <!-- load the error handling configuration xml file -->
+    <property name="errorHandlingConfig" expression="get-property('registry','conf:/errorHandlingConfig.xml')" scope="default" type="OM"/>
+    <!-- Populate all the properties required by the custom javascript -->
+    <property name="FAULT_LANG" expression="get-property('faultLang')"/>
+    <property name="FAULT_MSG" expression="get-property('faultMsg')"/>
+    <property name="FAULT_CODE" expression="get-property('axis2', 'HTTP_SC')"/>
+    <property name="FAULT_DESC" expression="get-property('axis2', 'HTTP_SC_DESC')"/>
+    <property name="FAULT_URL" expression="get-property('faultUrl')"/>
+    <filter source="boolean(get-property('FAULT_STATUS'))" regex="false">
+    	<then>
+    		 <property name="FAULT_STATUS" expression="get-property('FAULT_CODE')"/>
+    	</then>
+    </filter>
+    
+    <filter source="get-property('FAULT_STATUS')" regex="null">
+    	<then>
+    		 <property name="FAULT_STATUS" expression="get-property('FAULT_CODE')"/>
+    	</then>
+    </filter>
+    
+    <!-- run the javascript to generate the final error response to send back to the client -->
+    <script language="js" key="conf:/transformErrorMessages.js" function="transform"/>
+    <!-- Log the error to the WSO2 AM log -->
+    <log level="custom">
+        <property name="STATUS" value="Executing custom 'customErrorHandling' fault sequence"/>
+        <property name="ERROR_CODE" expression="get-property('FAULT_CODE')"/>
+        <property name="ERROR_MESSAGE" expression="get-property('FAULT_MSG')"/>
+        <property name="ERROR_DESC" expression="get-property('FAULT_DESC')"/>
+        <property name="ERROR_LANG" expression="get-property('FAULT_LANG')"/>
+        <property name="ERROR_URL" expression="get-property('FAUL_URL')"/>    
+    </log>
+    <!-- Set message type to json -->
+	<property name="messageType" value="application/json" scope="axis2"/>	
+    <send/>
+</sequence>

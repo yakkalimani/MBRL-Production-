@@ -1,0 +1,12 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="Config_IN">
+    <switch source="get-property('To')">
+       	<case regex=".*/getConfig.*">
+            <payloadFactory media-type="json">
+        		<format>{"Bowker": "TUJSTEltYWdlV2ViOjAyTTBCUkwy"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <respond/>
+        </case>
+	</switch>
+</sequence>

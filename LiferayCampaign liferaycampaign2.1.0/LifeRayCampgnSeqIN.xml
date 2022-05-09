@@ -1,0 +1,29 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LifeRayCampgnSeqIN">
+    <property name="URL_INFO" expression="get-property('To')"/>
+	<property name="messageType" value="application/json" scope="axis2"/>
+    <switch source="get-property('URL_INFO')">
+        <case regex=".*/campaignSync?.*">
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}/o/events/addCampaign"/>
+                </endpoint>
+            </send>
+        </case>
+		<case regex=".*/sendCampaignNotification?.*">
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}/o/mbrl-rest/sendEloquaNotification"/>
+                </endpoint>
+            </send>
+        </case>
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"message":"Requested resource not found."}</format>
+                <args/>
+            </payloadFactory>
+            <respond/>
+        </default>
+    </switch>
+</sequence>

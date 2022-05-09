@@ -1,0 +1,68 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="SpaceListing110_IN">
+    <property name="uri.var.articleId" expression="$url:articleId"/>
+    <property name="uri.var.groupId" expression="$url:groupId"/>
+    <property name="uri.var.locale" expression="get-property('transport', 'x-sirs-locale')"/>
+    <property name="uri.var.spaceId" expression="get-property('uri.var.spaceId')"/>
+    <property name="uri.var.groupId" expression="get-property('uri.var.groupId')"/>
+    <property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+    <script language="js">
+        <![CDATA[
+		var oldLocale = mc.getProperty("uri.var.locale");
+		var newLocale;
+					if( oldLocale == "en_US" || oldLocale == "en"){
+					newLocale = "en";	
+				} else if(oldLocale == "ar_SA" || oldLocale == "ar"){
+					newLocale = "ar";					
+				} else {
+					newLocale = "en";					
+				}
+				mc.setProperty("newLocale", newLocale.toString());									
+				]]>
+    </script>
+    <!-- get the faultURL for error message handling -->
+    <property name="faultUrl" expression="get-property('To')"/>
+    <property name="faultLang" expression="get-property('newLocale')"/>
+    <switch source="get-property('To')">
+        <case regex=".*/spaceDetail?.*">
+            <property name="uri.var.uri" expression="get-property('uri_lr_spaceDetails')" scope="default" type="STRING"/>
+            <header name="Accept" value="*/*" scope="transport"/>
+            <property name="uri.var.newLocaleValue" expression="get-property('newLocale')"/>
+            <property name="uri.var.articleId" expression="get-property('uri.var.spaceId')"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?locale={uri.var.newLocaleValue}&amp;articleId={uri.var.articleId}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/spaceListInfo?.*">
+            <property expression="$url:locale" name="LOCALE"/>
+            <property name="uri.var.uri" expression="get-property('uri_lr_spaceListings')" scope="default" type="STRING"/>
+            <header name="Accept" value="*/*" scope="transport"/>
+            <property name="uri.var.newLocaleValue" expression="get-property('newLocale')"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?locale={uri.var.newLocaleValue}"/>
+                </endpoint>
+            </send>
+        </case>
+        <case regex=".*/otherSpaces?.*">
+            <property name="uri.var.uri" expression="get-property('uri_lr_otherSpaces')" scope="default" type="STRING"/>
+            <header name="Accept" value="*/*" scope="transport"/>
+            <property name="uri.var.newLocaleValue" expression="get-property('newLocale')"/>
+            <property name="uri.var.groupId" expression="$url:groupId"/>
+            <property name="uri.var.articleId" expression="$url:articleId"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?locale={uri.var.newLocaleValue}&amp;groupId={uri.var.groupId}&amp;articleId={uri.var.articleId}"/>
+                </endpoint>
+            </send>
+        </case>
+        <default>
+            <script language="js">
+                <![CDATA[var responsePayload = mc.getPayloadJSON();
+                 mc.setPayloadJSON('{"Message": "Invalid API call Request"}');
+			]]>
+            </script>
+        </default>
+    </switch>
+</sequence>

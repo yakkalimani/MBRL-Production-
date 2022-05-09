@@ -1,0 +1,1745 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="payment_IN" onError="customErrorHandling">
+	<!-- Get the request url postfix -->
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+		<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="uri.var.lang" value="ara" scope="default" type="STRING"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+<!-- Determine the called API -->	
+    <switch source="get-property('To')">
+    	<!-- Logic for payment Token API -->
+		<case regex=".*/token.*">
+			<!-- Get the client_type header parameter -->
+			<property name="ClientType" expression="get-property('transport', 'x-sirs-clientType')" />
+			<!-- Based on the client-type parameter value, get the appropriate clientid and password for UAE Pass -->
+			<switch source="get-property('ClientType')">
+				<case regex="IOS|Android">
+					<!--<property name="uri.var.srvcode" expression="get-property('payment_serviceCode_mobile')" scope="default" type="STRING"/>-->
+					<property name="uri.var.srvcode" value="MS" scope="default" type="STRING"/>
+				</case>
+				<case regex="Portal">
+					<!--<property name="uri.var.srvcode" expression="get-property('payment_serviceCode_portal')" scope="default" type="STRING"/>-->	
+					<property name="uri.var.srvcode" value="OS" scope="default" type="STRING"/>
+				</case>
+				<!-- if no valid client-type value was passed, then return a bad request -->
+				<default>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Invalid value for x-sirs-clientType header parameter. Expected IOS, Android or Portal"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+				</default>
+			</switch>
+			
+			<!-- Set message type to json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<!-- Get the user Id from the request body json -->
+			<property description="userId" expression="json-eval($.userId)" name="uri.var.usr"/>
+			<!-- Get the bill number from the request body json -->				
+			<property description="Bills" expression="json-eval($.billNumber)" name="uri.var.bil"/>
+			<!-- Get the nationality from the request body json -->			
+			
+			<property description="Nationality" expression="json-eval($.nationality)" name="uri.var.nationality"/>  
+			<property description="emirate Code" expression="json-eval($.emirateCode)" name="uri.var.emirateCode"/> 
+			<property description="fullName" expression="json-eval($.fullName)" name="uri.var.fullName"/>
+			<property description="email" expression="json-eval($.email)" name="uri.var.email"/>
+			<property description="mobile" expression="json-eval($.mobile)" name="uri.var.mobile"/>
+			
+			<!-- ############################################################ -->
+			<!-- #### check that all input parameters have been provided #### -->
+			<!-- ############################################################ -->
+			
+			<!-- Check that the user Id parameter is null  -->
+            <filter source="get-property('uri.var.usr')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected userId parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the list of bill ids is null  -->
+            <filter source="get-property('uri.var.bil')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected billNumber parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+             <!-- Check if the nationality parameter is null  -->
+            <filter source="get-property('uri.var.nationality')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected nationality parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if the emirate code parameter is null  -->
+            <filter source="get-property('uri.var.emirateCode')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected emirateCode parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if the fullName parameter is null  -->
+            <filter source="get-property('uri.var.fullName')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected fullName parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if the email parameter is null  -->
+            <filter source="get-property('uri.var.email')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected email parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if the mobile parameter is null  -->
+            <filter source="get-property('uri.var.mobile')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected mobile parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+			<!-- load the nationality details configuration xml file -->
+			<property name="nationalityCodeConfig" expression="get-property('registry','conf:/nationalityCodeConfig.xml')" scope="default" type="OM" />
+			<!-- run the javascript to find nationality code from name -->
+			<script language="js" key="conf:/findNationalityCode.js" function="transform"/>
+			
+			 <!-- Check if a valid nationality code has been found  -->
+            <filter source="boolean(get-property('nationalityCode'))" regex="false">
+            	<then>
+					<property name="nationalityCode" value="ARE"/>
+            	</then>
+            </filter>
+            
+             <!-- Check if a valid emirateCode code has been found  -->
+            <filter source="boolean(get-property('emiratesCode'))" regex="false">
+            	<then>
+            		<property name="nationalityCode" value="DXB"/>
+            	</then>
+            </filter>
+						
+			
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- Get the base url for Symphony APIs -->
+			<property name="uri.var.symphbase" expression="get-property('base_url_nginx_symphony')" scope="default" type="STRING"/>
+			<!-- Get the uri for Symphony Login API -->
+			<property name="uri.var.symphlogin" expression="get-property('uri_nginx_symph_login')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin username -->
+			<property name="uri.var.symphuserid" expression="get-property('symphony_admin_userId')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin user password -->
+			<property name="uri.var.symphuserpass" expression="get-property('symphony_admin_password')" scope="default" type="STRING"/>
+			<!-- Make a call to get the symphony admin user access token -->
+			<call blocking="true">
+        		<endpoint>
+            		<http method="GET" uri-template="{+uri.var.symphbase}{+uri.var.symphlogin}?password={+uri.var.symphuserpass}&amp;includeUserMiscInfo=true&amp;json=true&amp;login={+uri.var.symphuserid}&amp;jsonPOST=true"/>
+        		</endpoint>
+    		</call>
+           	
+           	<!-- Check that the response from call to Symphony login is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyToken" expression="json-eval($.sessionToken)" name="uri.var.stoken" scope="default" type="STRING"/>
+            	</then>
+            	<!-- Send error message if call to Symphony login fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the value of sessionToken is null -->
+            <filter source="get-property('uri.var.stoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- At this point, session token is successfully retrieved from Symphony -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <header name="x-sirs-sessionToken" expression="get-property('uri.var.stoken')" scope="transport"/>
+            <payloadFactory media-type="json">
+            	<format></format>
+            	<args></args>
+         	</payloadFactory>
+         	<!-- Remove the url postfix from the request url -->
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	<!-- get the symphony lookup patron info uri -->
+         	<property name="uri.var.symphlookuppatronuri" expression="get-property('uri_nginx_symph_patinfo')" scope="default" type="STRING"/>
+         			
+        	<call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.symphbase}{+uri.var.symphlookuppatronuri}?userID={uri.var.usr}&amp;json=true&amp;includePatronInfo=true&amp;includeFeeInfo=UNPAID_FEES_AND_PAYMENTS"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response from call to Symphony lookupPatronInfo is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyFeeInfo" expression="json-eval($.feeInfo)" name="uri.var.fee"/>
+            		<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+            		<property action="remove" name="x-sirs-clientID" scope="transport"/>
+            	</then>
+            	
+            	<!-- Send error message if call to Symphony lookupPatronInfo fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to retrieve patron fee info from Symphony"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the patron fee info parameter is null  -->
+            <filter source="get-property('uri.var.fee')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to retrieve patron fee info."}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Run script mediator with Javascript to retrieve total fee, trn and date and time-->
+            <script language="js" key="conf:/genTransIdAndTotal.js" function="transform"/>
+            
+            <!-- Check that the script mediator was successful-->
+            <filter source="get-property('result_str')" regex="Success">
+            	<then>
+            		<!-- retrieve the total fee, trn and dtm variables generated by the script mediator-->
+            		<property name="uri.var.fee" expression="get-property('result_totalFee')"/>
+            		<property name="uri.var.trn" expression="get-property('result_trn')"/>
+            		<property name="uri.var.dtm" expression="get-property('result_dtm')"/>
+            	</then>
+            	<!-- else return an error message, because there was an error-->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "$1"}</format>
+                		<args>
+                			<arg expression="get-property('result_str')"/>
+                		</args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+    		
+    		<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	
+        	<!-- At this point, we are ready to call DSG generatePaymentToken API -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+
+            <!-- Create the request body for the  DSG generatePaymentToken API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+    				"spCode": "MBRL",
+    				"servCode": "$1",
+    				"sptrn": $2,
+    				 "amount" :{
+        				"value": $3,
+        				"currency": "AED"
+    				},
+    				"timestamp": "$4",
+    				"description": "Test Transaction",
+    				"type": "sale",
+    				"versionCode": 2.1,
+    				"paymentChannel": 100,
+    				"isAuthenticated": "true",
+    				"userID" : "$5",
+    				"userName": "$7",
+					"fullNameEn": "$6",		
+					"email": "$7",		
+					"mobile": "$8",
+					"nationality": "$9",	
+					"emirateCode": "$10",
+					"serviceInfo" :
+    				{
+           				"serviceID" : "",
+           				"serviceNameEn" : "MBRL Payments"
+    				},
+    				"beneficiaryInfo" :
+    				{
+           				"accountID" : "",
+           				"fullNameEn": "$6",
+          				"txnAmount" : $3,
+          				"type" : "Individual",
+           				"mobileNo" : "$8",
+          				"email" : "$7",
+           				"companyNameEN" : ""
+    				}
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.srvcode')"/>
+            		<arg expression="get-property('uri.var.trn')"/>
+            		<arg expression="get-property('uri.var.fee')"/>
+            		<arg expression="get-property('uri.var.dtm')"/>
+            		<arg expression="get-property('uri.var.usr')"/>
+					<arg expression="get-property('uri.var.fullName')"/>
+					<arg expression="get-property('uri.var.email')"/>
+					<arg expression="get-property('uri.var.mobile')"/>
+					<arg expression="get-property('nationalityCode')"/>					
+					<arg expression="get-property('emiratesCode')"/>
+            	</args>
+         	</payloadFactory>
+         	<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 generate payment token API uri -->
+         	<property name="uri.var.amgeneratepaytokenuri" expression="get-property('uri_wso2_epaytoken')" scope="default" type="STRING"/>
+			<!-- Logging Request -->
+			<log description="" level="custom">
+                <property name="Request Body" expression="json-eval($.)"/>
+            </log>
+         	<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.amgeneratepaytokenuri}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response of the DSG generatePaymentToken API Call is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<!-- Get the token returned by the DSG generatePaymentToken API -->
+            		<property description="DSGToken" expression="json-eval($.token)" name="uri.var.dtoken" scope="default" type="STRING"/>
+            		<property description="redirectUrl" expression="json-eval($.['Redirect URL'])" name="uri.var.epayredirectionurl" scope="default" type="STRING"/>
+            	</then>
+            	
+            	<!-- Send error message if call to DSG generatePaymentToken API failed -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to generatePaymentToken from DSG epay"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the DSG generatePaymentToken API has failed to return a token  -->
+            <filter source="get-property('uri.var.dtoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "$1"}</format>
+                		<args>
+                			<arg expression="$.['Error Message:']" evaluator="json"/>
+                		</args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- At this point, we know that the payment/token API is successful, and ready to call the API to add to the retry queue -->
+            <!-- Remove the Authorization Header from the request -->
+            <property name="Authorization" scope="transport" action="remove"/>
+            <!-- Set the content type and message type to Application/json and remove Url Postfix -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <!-- set the body payload to the request to submit payment transaction confirm to the queue -->
+            <payloadFactory media-type="json">
+                <format>
+            	{
+					"userId" : "$1",
+					"transactionId" : "$2",
+					"billNumber" : $3,
+                    "netAmount" : $4
+				}
+				</format>
+                <args>
+            		<arg expression="get-property('uri.var.usr')"/>
+            		<arg expression="get-property('uri.var.trn')"/>
+            		<arg expression="get-property('uri.var.bil')"/>
+            		<arg expression="get-property('uri.var.fee')"/>
+                </args>
+            </payloadFactory>
+			<property name="uri.var.base_url_sb_payment" expression="get-property('base_url_sb_payment')" scope="default" type="STRING"/>
+            <!-- Make the actual Submit to Queue API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.base_url_sb_payment}/confirm/transaction"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response of the add to payment retry queue API successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<log level="custom">
+            			<property description="QueueResponse" expression="json-eval($.)" name="uri.var.qresponse"/>
+            		</log>
+            	</then>
+            	
+            	<!-- Send error message if call to DSG generatePaymentToken API failed -->
+            	<else>
+            		<log level="custom">
+            			<property description="QueueResponse" expression="json-eval($.)" name="uri.var.qresponse"/>
+            		</log>
+            		<property name="HTTP_SC" value="200" scope="axis2"/>
+            	</else>
+            </filter>
+            
+            <!-- At this point, everything is fine, and we are ready to return a successful response to called -->
+            <payloadFactory media-type="json">
+                <format>
+                {
+					"uriToken" : "$1",
+					"sptrn" : "$2",
+					"total" : 
+					{
+						"currency" : "AED",
+						"value" : $3
+					},
+					"billNumber" : $4
+				}
+				</format>
+                <args>
+                	<arg expression="get-property('uri.var.epayredirectionurl')"/>
+            		<arg expression="get-property('uri.var.trn')"/>
+            		<arg expression="get-property('uri.var.fee')"/>
+            		<arg expression="get-property('uri.var.bil')"/>
+                </args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <respond></respond>
+        </case>
+        
+        <!-- ################################# -->
+        <!-- Logic for confirm transaction API -->
+        <!-- ################################# -->
+        
+        <case regex=".*/transaction/confirm.*">
+        	
+        	<!-- Set message type to json -->
+			<property name="messageType" value="application/json" scope="axis2"/>				
+			<!-- get the userId Parameter from JSON request body -->
+			<property description="userId" expression="json-eval($.userId)" name="uri.var.usr"/>	
+			<!-- get the payment transaction id Parameter from JSON request body -->
+			<property description="transaction_Id" expression="json-eval($.transactionId)" name="uri.var.ptransactionid"/>
+			<!-- get the list of bills to confirm and record from JSON request body -->
+			<property description="Bills_Array" expression="json-eval($.billNumber)" name="uri.var.bil"/>
+			<!-- get the netAmount parameter from JSON request body -->
+			<property description="netAmount" expression="json-eval($.netAmount)" name="uri.var.amt"/>
+			
+			<!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.usr')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body: userId"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.ptransactionid')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body: transactionId"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.amt')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body: netAmount"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.bil')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body: billNumber"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+			
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- Get the base url for Symphony APIs -->
+			<property name="uri.var.symphbase" expression="get-property('base_url_nginx_symphony')" scope="default" type="STRING"/>
+			<!-- Get the uri for Symphony Login API -->
+			<property name="uri.var.symphlogin" expression="get-property('uri_nginx_symph_login')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin username -->
+			<property name="uri.var.symphuserid" expression="get-property('symphony_admin_userId')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin user password -->
+			<property name="uri.var.symphuserpass" expression="get-property('symphony_admin_password')" scope="default" type="STRING"/>
+			<!-- Make a call to get the symphony admin user access token -->
+			<call blocking="true">
+        		<endpoint>
+            		<http method="POST" uri-template="{+uri.var.symphbase}{+uri.var.symphlogin}?password={+uri.var.symphuserpass}&amp;includeUserMiscInfo=true&amp;json=true&amp;login={+uri.var.symphuserid}&amp;jsonPOST=true"/>
+        		</endpoint>
+    		</call>
+    		
+    		<!-- Check that the response from call to Symphony login is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyToken" expression="json-eval($.sessionToken)" name="uri.var.stoken" scope="default" type="STRING"/>
+            	</then>
+            	<!-- Send error message if call to Symphony login fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the value of sessionToken is null -->
+            <filter source="get-property('uri.var.stoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Call Lookup Patron Info for the userId to get the list of unpaid bills. -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- Set the x-sirs-sessionToken header parameter -->
+            <header name="x-sirs-sessionToken" expression="get-property('uri.var.stoken')" scope="transport"/>
+            <!-- Clear the request body payload -->
+            <payloadFactory media-type="json">
+            	<format></format>
+            	<args></args>
+         	</payloadFactory>
+         	<!-- Remove the url postfix from the request url -->
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	<!-- get the symphony lookup patron info uri -->
+         	<property name="uri.var.symphlookuppatronuri" expression="get-property('uri_nginx_symph_patinfo')" scope="default" type="STRING"/>
+			<!-- Call the actual API -->         			
+        	<call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.symphbase}{+uri.var.symphlookuppatronuri}?userID={uri.var.usr}&amp;json=true&amp;includePatronInfo=true&amp;includeFeeInfo=ALL_FEES_AND_PAYMENTS"/>
+            	</endpoint>
+            </call>
+            
+             <!-- Check that the response from call to Symphony lookupPatronInfo is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyFeeInfo" expression="json-eval($.feeInfo)" name="uri.var.fee"/>
+            		<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+            	</then>
+            	
+            	<!-- Send error message if call to Symphony lookupPatronInfo fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to retrieve patron fee info from Symphony"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the patron fee info parameter is null  -->
+            <filter source="get-property('uri.var.fee')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to retrieve patron fee info."}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Run script mediator with Javascript to retrieve total fee, trn and date and time-->
+            <script language="js" key="conf:/checkBillStatusAndNetAmount.js" function="transform"/>
+            
+            <!-- Check that the script mediator was successful-->
+            <filter source="get-property('result_str')" regex="All_Unpaid">
+            	<then>
+            		
+            	</then>
+            	<!-- else return an error message, because there was an error-->
+            	<else>
+            		<filter source="get-property('result_str')" regex="All_Paid">
+            			<then>
+            				<payloadFactory media-type="json">
+                				<format>{"statusCode": 200, "statusMsg" : "Success - All bills are already paid and confirmed."}</format>
+                				<args>
+                					<arg expression="get-property('result_str')"/>
+                				</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="200" scope="axis2"/>
+            				<respond></respond>
+            			</then>
+            			<else>
+            				<payloadFactory media-type="json">
+                				<format>{"statusCode": 500, "statusMsg" : "$1"}</format>
+                				<args>
+                					<arg expression="get-property('result_str')"/>
+                				</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</else>
+            		</filter>
+            	</else>
+            </filter>
+            
+            <!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	<!-- Get the WSO2 token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	
+            <!-- ############################################# -->
+            <!-- #### getTransactionStatus API Call Logic #### -->
+            <!-- ############################################# -->
+            
+            <!-- Set the content type and message type to application/json -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- remove REST_URL_POSTFIX -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            
+            <!-- Create the request body for the  DSG transaction status API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+    				"spCode": "MBRL",
+    				"servCode": "OS",
+    				"spTrn": "$1"
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.ptransactionid')"/>
+            	</args>
+         	</payloadFactory>
+            
+            <!-- Get the actual base url for the spring boot payment APIs -->
+            <property name="uri.var.base_url_sb_payment" expression="get-property('base_url_sb_payment')" scope="default" type="STRING"/>
+            <!-- get the uri of the get transaction status API at Spring Boot -->
+            <property name="uri.var.trnstatusuri" expression="get-property('uri_sb_transaction_status')" scope="default" type="STRING"/>
+            
+            <!-- Call the actual endpoint API for get transaction status API -->
+            <call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.base_url_sb_payment}{+uri.var.trnstatusuri}"/>
+            	</endpoint>
+            </call>
+			
+			<!-- Check that the response of the DSG getTransactionStatus API Call is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<!-- Get the status code and status message text returned by the getTransactionStatus API call -->
+            		<property description="Payment_Transaction_Status_Code" expression="json-eval($.TRANSACTION.MESSAGECODE)" name="uri.var.trnstatuscode" scope="default" type="STRING"/>
+            		<property description="Payment_Transaction_Status_Txt" expression="json-eval($.TRANSACTION.MESSAGE)" name="uri.var.trnstatustxt" scope="default" type="STRING"/>
+            	</then>
+            	
+            	<!-- Send error message if call to DSG getTransactionStatus API failed -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to get payment transaction status from DSG"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the DSG get transaction status API has failed to return a status code  -->
+            <filter source="get-property('uri.var.trnstatuscode')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to get payment transaction status from DSG"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check for successful payment response -->
+            <property name="isPaymentSuccessCode" expression="get-property('uri.var.trnstatuscode') = 0"/>
+			
+			<!-- Check if the payment code is not a success -->
+            <filter source="get-property('isPaymentSuccessCode')" regex="false">
+            	<then>
+            		<property name="isPaymentCancelledCode" expression="get-property('uri.var.trnstatuscode') = 10"/>
+            		 <filter source="get-property('isPaymentCancelledCode')" regex="true">
+            		 	<then>
+            		 		<payloadFactory media-type="json">
+            					<format>{"statusCode": 200, "statusMsg" : "Payment successfully cancelled"}</format>
+            					<args>
+            					</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="200" scope="axis2"/><loopback/>
+            		 	</then>
+            		 	<else>
+            				<payloadFactory media-type="json">
+            					<format>{"statusCode": 500, "statusMsg" : "$1"}</format>
+            					<args>
+            						<arg expression="get-property('uri.var.trnstatustxt')"/>
+            					</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</else>
+            		</filter>
+            	</then>
+            </filter>
+            
+            <!-- At this point, we know that the payment has been a success -->
+            <!-- At this point, we are ready to call DSG confirmPaymentDelivery API -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            
+            <!-- Create the request body for the  DSG confirmPaymentDelivery API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+               		"spCode":"MBRL",
+               		"servCode":"OS",
+               		"sptrn" : "$1",
+               		"message":{
+               			"code":$2,
+               			"text":"$3"
+					}
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.ptransactionid')"/>
+            		<arg expression="get-property('uri.var.trnstatuscode')"/>
+            		<arg expression="get-property('uri.var.trnstatustxt')"/>
+            	</args>
+         	</payloadFactory>
+         	
+         	<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 get payment confirm delivery API uri -->
+         	<property name="uri.var.ampayconfirmdeliveryuri" expression="get-property('uri_wso2_epay_confirm')" scope="default" type="STRING"/>
+         	<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.ampayconfirmdeliveryuri}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response of the DSG confirmPaymentDelivery API Call is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<!-- Get the the response code and text -->
+            		<property description="Confirm_Response_Code" expression="json-eval($.code)" name="confirmResponseCode" scope="default" type="STRING"/>
+            		<property description="Confirm_Response_Text" expression="json-eval($.text)" name="confirmResponseText" scope="default" type="STRING"/>
+            	</then>
+            	
+            	<!-- Send error message if call to DSG confirmPaymentDelivery API failed -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to confirm service delivery from DSG confirmPaymentDelivery API"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- get the successful confirm payment code and text -->
+            <property name="isConfirmSuccessCode" expression="get-property('confirmResponseCode') = 0"/>
+            <property name="isConfirmSuccessText" expression="get-property('confirmResponseText') = 'true'"/>
+            
+            <!-- Check if either the confirmation code or text are not successful -->
+            <filter source="boolean(boolean(get-property('isConfirmSuccessCode')) or 
+                       boolean(get-property('isConfirmSuccessText')))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+            			<format>{"statusCode": 500, "statusMsg" : "Service Confirmation Code $1 - Text $2"}</format>
+            			<args>
+            				<arg expression="get-property('confirmResponseCode')"/>
+            				<arg expression="get-property('confirmResponseText')"/>
+            			</args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- if x-sirs-debugMode header parameter exists, then don't record payment at Symphony -->
+            <filter source="boolean(get-property('transport', 'x-sirs-debugMode'))" regex="false">
+            	<then>
+            		<!-- Call the confirm payment service to Symphony -->
+            		<header name="Content-Type" value="application/json" scope="transport"/>
+            		<property name="messageType" value="application/json" scope="axis2"/>
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            		<header name="x-sirs-sessionToken" expression="get-property('uri.var.stoken')" scope="transport"/>
+            
+            		<!-- Create the request body for the Symphony recordPayments API-->
+            		<payloadFactory media-type="json">
+            		<format>
+					{
+						"feePayment":
+						[
+        					{
+        						"amount": 
+        						{
+ 	        						"currency":"AED",
+	        						"value":$1
+        						},
+        						"paymentTypeID": "CREDITCARD",
+        						"vendorTransactionNumber": "$2"
+         					} 
+    					],
+    					"billKey": $3,
+    					"billUserID" : "$4",
+    					"selfPaid" : true,
+    					"paidAtBillingLibrary": true
+					}
+            		</format>
+            		<args>
+            			<arg expression="get-property('uri.var.amt')"/>
+            			<arg expression="get-property('uri.var.ptransactionid')"/>
+            			<arg expression="get-property('uri.var.bil')"/>
+            			<arg expression="get-property('uri.var.usr')"/>
+            		</args>
+         			</payloadFactory>
+         	
+         			<!-- Get the wso2 Symphony record payments API uri -->
+         			<property name="uri.var.amsymphrecordpayment" expression="get-property('uri_wso2_record_Payment')" scope="default" type="STRING"/>
+         	
+         			<!-- Make the actual API Call to Symphony record Payments -->
+         			<call blocking="true">
+                		<endpoint>
+                			<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.amsymphrecordpayment}"/>
+            			</endpoint>
+            		</call>
+            
+            		<!-- Check that the response of the Symphony record Payments API Call is successful -->
+            		<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            			<then>
+            				 <!-- Get the response properties from Symphony recordPayments API -->
+            				<property name="netAmountRecorded" expression="json-eval($.netAmountRecorded.value)"/>
+            				<property name="feePaymentProblem" expression="json-eval($.feePaymentProblem)"/>
+            				<property name="netAmountRecordedCorrect" expression="get-property('netAmountRecorded') = get-property('uri.var.amt')"/>
+            				<property name="nofeePaymentProblem" expression="get-property('feePaymentProblem') = '[]'"/>
+            				<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+            				<property action="remove" name="Authorization" scope="transport"/>
+            				<property action="remove" name="x-sirs-clientID" scope="transport"/>
+            			</then>
+            	
+            			<!-- Send error message if call to DSG confirmPaymentDelivery API failed -->
+            			<else>
+            				<payloadFactory media-type="json">
+                				<format>{"statusCode": 500, "statusMsg" : "Failed to recordPayments from Symphony APIs"}</format>
+                				<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</else>
+            		</filter>
+            
+            		<!-- Check that the record Payment API to Symphony has failed -->	
+            		<filter source="boolean(boolean(get-property('nofeePaymentProblem')) or 
+                		       boolean(get-property('netAmountRecordedCorrect')))" regex="false">
+            			<then>
+            				<payloadFactory media-type="json">
+            					<format>{"statusCode": 500, "statusMsg" : "Symphony Payment Confirmation $1"}</format>
+            					<args>
+            						<arg expression="get-property('feePaymentProblem')"/>
+            					</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</then>
+            		</filter>
+            	</then>
+            </filter>
+            
+            <!-- At this point everything is a success -->
+            <!-- Send a succesful response -->
+
+            <payloadFactory media-type="json">
+            	<format>{"statusCode": 200, "statusMsg" : "Success"}</format>
+            	<args>
+            	</args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <respond></respond>
+        </case>
+        <!-- Logic for confirm payment API -->
+        <case regex=".*/confirm.*">
+        	
+        	<!-- Set message type to json -->
+			<property name="messageType" value="application/json" scope="axis2"/>				
+			<!-- get the userId Parameter from JSON request body -->
+			<property description="userId" expression="json-eval($.userId)" name="uri.var.usr"/>	
+			<!-- get the paymentToken Parameter from JSON request body -->
+			<property description="paymentToken" expression="json-eval($.paymentToken)" name="uri.var.ptoken"/>
+			<!-- get the list of bills to confirm and record from JSON request body -->
+			<property description="Bills_Array" expression="json-eval($.billNumber)" name="uri.var.bil"/>
+			<!-- get the netAmount parameter from JSON request body -->
+			<property description="netAmount" expression="json-eval($.netAmount)" name="uri.var.amt"/>
+			
+			<!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.usr')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.ptoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.amt')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the all the required request body parameters are defined  -->
+            <filter source="get-property('uri.var.bil')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory JSON parmeters not defined in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+			
+			<!-- save current body data to "payload" variable -->
+			<enrich>
+    			<source type="body"/>
+    			<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- Get the base url for Symphony APIs -->
+			<property name="uri.var.symphbase" expression="get-property('base_url_nginx_symphony')" scope="default" type="STRING"/>
+			<!-- Get the uri for Symphony Login API -->
+			<property name="uri.var.symphlogin" expression="get-property('uri_nginx_symph_login')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin username -->
+			<property name="uri.var.symphuserid" expression="get-property('symphony_admin_userId')" scope="default" type="STRING"/>
+			<!-- Get the symphony admin user password -->
+			<property name="uri.var.symphuserpass" expression="get-property('symphony_admin_password')" scope="default" type="STRING"/>
+			<!-- Make a call to get the symphony admin user access token -->
+			
+			<!-- Make a call to get the symphony admin user access token -->
+			<call blocking="true">
+        		<endpoint>
+            		<http method="POST" uri-template="{+uri.var.symphbase}{+uri.var.symphlogin}?password={+uri.var.symphuserpass}&amp;includeUserMiscInfo=true&amp;json=true&amp;login={+uri.var.symphuserid}&amp;jsonPOST=true"/>
+        		</endpoint>
+    		</call>
+    		
+    		<!-- Check that the response from call to Symphony login is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyToken" expression="json-eval($.sessionToken)" name="uri.var.stoken" scope="default" type="STRING"/>
+            	</then>
+            	<!-- Send error message if call to Symphony login fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the value of sessionToken is null -->
+            <filter source="get-property('uri.var.stoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to obtain valid Symphony token"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Call Lookup Patron Info for the userId to get the list of unpaid bills. -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- Set the x-sirs-sessionToken header parameter -->
+            <header name="x-sirs-sessionToken" expression="get-property('uri.var.stoken')" scope="transport"/>
+            <!-- Clear the request body payload -->
+            <payloadFactory media-type="json">
+            	<format></format>
+            	<args></args>
+         	</payloadFactory>
+         	<!-- Remove the url postfix from the request url -->
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	<!-- get the symphony lookup patron info uri -->
+         	<property name="uri.var.symphlookuppatronuri" expression="get-property('uri_nginx_symph_patinfo')" scope="default" type="STRING"/>
+			<!-- Call the actual API -->         			
+        	<call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.symphbase}{+uri.var.symphlookuppatronuri}?userID={uri.var.usr}&amp;json=true&amp;includePatronInfo=true&amp;includeFeeInfo=UNPAID_FEES_AND_PAYMENTS"/>
+            	</endpoint>
+            </call>
+            
+             <!-- Check that the response from call to Symphony lookupPatronInfo is successful -->
+           	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<property description="symphonyFeeInfo" expression="json-eval($.feeInfo)" name="uri.var.fee"/>
+            		<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+            	</then>
+            	
+            	<!-- Send error message if call to Symphony lookupPatronInfo fails -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to retrieve patron fee info from Symphony"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the patron fee info parameter is null  -->
+            <filter source="get-property('uri.var.fee')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to retrieve patron fee info."}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Run script mediator with Javascript to retrieve total fee, trn and date and time-->
+            <script language="js" key="conf:/checkPaymentBillsUnpaid.js" function="transform"/>
+            
+            <!-- Check that the script mediator was successful-->
+            <filter source="get-property('result_str')" regex="Success">
+            	<then>
+            		
+            	</then>
+            	<!-- else return an error message, because there was an error-->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "$1"}</format>
+                		<args>
+                			<arg expression="get-property('result_str')"/>
+                		</args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	<!-- Get the WSO2 token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<property name="wso2_token" expression="//access_token/text()"/>
+            
+            <!-- At this point, we are ready to call DSG getPaymentTokendetails API -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            
+            <!-- Create the request body for the  DSG getPaymentTokendetails API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+               		"spCode": "MBRL",
+               		"servCode": "OS",
+			   		"responseToken":"$1"
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.ptoken')"/>
+            	</args>
+         	</payloadFactory>
+         	
+         	<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 get payment token details API uri -->
+         	<property name="uri.var.ampaytokendetailsuri" expression="get-property('uri_wso2_epaytoken_details')" scope="default" type="STRING"/>
+         	
+         	<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.ampaytokendetailsuri}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response of the DSG getPaymentTokendetails API Call is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<!-- Get the token returned by the DSG getPaymentTokendetails API -->
+            		<property description="Payment_Status_Code" expression="json-eval($.code)" name="uri.var.pcode" scope="default" type="STRING"/>
+            		<property description="PAyment_Status_Text" expression="json-eval($.text)" name="uri.var.ptext" scope="default" type="STRING"/>
+            		<property description="PAyment_Status_sptrn" expression="json-eval($.sptrn)" name="uri.var.sptrn" scope="default" type="STRING"/>
+            		<property description="Payment_Service_Code" expression="json-eval($.servCode)" name="uri.var.servcode" scope="default" type="STRING"/>
+            	</then>
+            	
+            	<!-- Send error message if call to DSG getPaymentTokendetails API failed -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to get payment status from DSG getPaymentTokendetails API"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- Check that the DSG getPaymentTokendetails API has failed to return a status code  -->
+            <filter source="get-property('uri.var.pcode')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to get payment status from DSG getPaymentTokendetails API"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the DSG getPaymentTokendetails API has failed to return a status text  -->
+            <filter source="get-property('uri.var.ptext')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to get payment status from DSG getPaymentTokendetails API"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the DSG getPaymentTokendetails API has failed to return a transaction Number  -->
+            <filter source="get-property('uri.var.sptrn')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to get transaction number from DSG getPaymentTokendetails API"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check for successful payment response -->
+            <property name="isPaymentSuccessCode" expression="get-property('uri.var.pcode') = 0"/>
+			
+			<!-- Check if the payment code is not a success -->
+            <filter source="get-property('isPaymentSuccessCode')" regex="false">
+            	<then>
+            		<property name="isPaymentCancelledCode" expression="get-property('uri.var.pcode') = 10"/>
+            		 <filter source="get-property('isPaymentCancelledCode')" regex="true">
+            		 	<then>
+            		 		<payloadFactory media-type="json">
+            					<format>{"statusCode": 500, "statusMsg" : "Payment has been cancelled"}</format>
+            					<args>
+            					</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            		 	</then>
+            		 	<else>
+            				<payloadFactory media-type="json">
+            					<format>{"statusCode": 500, "statusMsg" : "$1"}</format>
+            					<args>
+            						<arg expression="get-property('uri.var.ptext')"/>
+            					</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</else>
+            		</filter>
+            	</then>
+            </filter>
+            
+            <!-- At this point, we know that the payment has been a success -->
+            <!-- At this point, we are ready to call DSG confirmPaymentDelivery API -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            
+            <!-- Create the request body for the  DSG confirmPaymentDelivery API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+               		"spCode":"MBRL",
+               		"servCode":"$1",
+               		"sptrn" : "$2",
+               		"message":{
+               			"code":$3,
+               			"text":"$4"
+					}
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.servcode')"/>
+            		<arg expression="get-property('uri.var.sptrn')"/>
+            		<arg expression="get-property('uri.var.pcode')"/>
+            		<arg expression="get-property('uri.var.ptext')"/>
+            	</args>
+         	</payloadFactory>
+         	
+         	<!-- Get the wso2 get payment confirm delivery API uri -->
+         	<property name="uri.var.ampayconfirmdeliveryuri" expression="get-property('uri_wso2_epay_confirm')" scope="default" type="STRING"/>
+         	
+         	<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.ampayconfirmdeliveryuri}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Check that the response of the DSG confirmPaymentDelivery API Call is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<!-- Get the the response code and text -->
+            		<property description="Confirm_Response_Code" expression="json-eval($.code)" name="confirmResponseCode" scope="default" type="STRING"/>
+            		<property description="Confirm_Response_Text" expression="json-eval($.text)" name="confirmResponseText" scope="default" type="STRING"/>
+            	</then>
+            	
+            	<!-- Send error message if call to DSG confirmPaymentDelivery API failed -->
+            	<else>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to confirm service delivery from DSG confirmPaymentDelivery API"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</else>
+            </filter>
+            
+            <!-- get the successful confirm payment code and text -->
+            <property name="isConfirmSuccessCode" expression="get-property('confirmResponseCode') = 0"/>
+            <property name="isConfirmSuccessText" expression="get-property('confirmResponseText') = 'true'"/>
+            
+            <!-- Check if either the confirmation code or text are not successful -->
+            <filter source="boolean(boolean(get-property('isConfirmSuccessCode')) or 
+                       boolean(get-property('isConfirmSuccessText')))" regex="false">
+            	<then>
+            		<payloadFactory media-type="json">
+            			<format>{"statusCode": 500, "statusMsg" : "Service Confirmation Code $1 - Text $2"}</format>
+            			<args>
+            				<arg expression="get-property('confirmResponseCode')"/>
+            				<arg expression="get-property('confirmResponseText')"/>
+            			</args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <filter source="boolean(get-property('transport', 'x-sirs-debugMode'))" regex="false">
+            	<then>
+            		<!-- Call the confirm payment service to Symphony -->
+            		<header name="Content-Type" value="application/json" scope="transport"/>
+            		<property name="messageType" value="application/json" scope="axis2"/>
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            		<header name="x-sirs-sessionToken" expression="get-property('uri.var.stoken')" scope="transport"/>
+            
+            		<!-- Create the request body for the Symphony recordPayments API-->
+            		<payloadFactory media-type="json">
+            		<format>
+					{
+						"feePayment":
+						[
+        					{
+        						"amount": 
+        						{
+ 	        						"currency":"AED",
+	        						"value":$1
+        						},
+        						"paymentTypeID": "CREDITCARD",
+        						"vendorTransactionNumber": "$2"
+         					} 
+    					],
+    					"billKey": $3,
+    					"billUserID" : "$4",
+    					"selfPaid" : true,
+    					"paidAtBillingLibrary": true
+					}
+            		</format>
+            		<args>
+            			<arg expression="get-property('uri.var.amt')"/>
+            			<arg expression="get-property('uri.var.sptrn')"/>
+            			<arg expression="get-property('uri.var.bil')"/>
+            			<arg expression="get-property('uri.var.usr')"/>
+            		</args>
+         			</payloadFactory>
+         	
+         			<!-- Get the wso2 Symphony record payments API uri -->
+         			<property name="uri.var.amsymphrecordpayment" expression="get-property('uri_wso2_record_Payment')" scope="default" type="STRING"/>
+         	
+         			<!-- Make the actual API Call to Symphony record Payments -->
+         			<call blocking="true">
+                		<endpoint>
+                			<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.amsymphrecordpayment}"/>
+            			</endpoint>
+            		</call>
+            
+            		<!-- Check that the response of the Symphony record Payments API Call is successful -->
+            		<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            			<then>
+            				 <!-- Get the response properties from Symphony recordPayments API -->
+            				<property name="netAmountRecorded" expression="json-eval($.netAmountRecorded.value)"/>
+            				<property name="feePaymentProblem" expression="json-eval($.feePaymentProblem)"/>
+            				<property name="netAmountRecordedCorrect" expression="get-property('netAmountRecorded') = get-property('uri.var.amt')"/>
+            				<property name="nofeePaymentProblem" expression="get-property('feePaymentProblem') = '[]'"/>
+            				<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+            				<property action="remove" name="Authorization" scope="transport"/>
+            				<property action="remove" name="x-sirs-clientID" scope="transport"/>
+            			</then>
+            	
+            			<!-- Send error message if call to DSG confirmPaymentDelivery API failed -->
+            			<else>
+            				<payloadFactory media-type="json">
+                				<format>{"statusCode": 500, "statusMsg" : "Failed to recordPayments from Symphony APIs"}</format>
+                				<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</else>
+            		</filter>
+            
+            		<!-- Check that the record Payment API to Symphony has failed -->	
+            		<filter source="boolean(boolean(get-property('nofeePaymentProblem')) or 
+                		       boolean(get-property('netAmountRecordedCorrect')))" regex="false">
+            			<then>
+            				<payloadFactory media-type="json">
+            					<format>{"statusCode": 500, "statusMsg" : "Symphony Payment Confirmation $1"}</format>
+            					<args>
+            						<arg expression="get-property('feePaymentProblem')"/>
+            					</args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="500" scope="axis2"/><loopback/>
+            			</then>
+            		</filter>
+            	</then>
+            </filter>
+            
+            <!-- At this point everything is a success -->
+            <!-- Send a succesful response -->
+
+            <payloadFactory media-type="json">
+            	<format>{"statusCode": 200, "statusMsg" : "Success"}</format>
+            	<args>
+            	</args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            <respond></respond>
+        </case>
+		
+		<case regex=".*/addPaymentTransaction">
+		
+            <property description="Payment_Status_Code" expression="json-eval($.StatusCode)" name="uri.var.pcode"/>
+            <property description="Payment_Status_Text" expression="json-eval($.Status)" name="uri.var.ptext"/>
+            <property description="Payment_Status_sptrn" expression="json-eval($.Sptrn)" name="uri.var.sptrn"/>
+            <property description="Payment_Service_Code" expression="json-eval($.SERVCode)" name="uri.var.servcode"/>
+			<property description="Payment_DegTrn_Code" expression="json-eval($.DegTrn)" name="uri.var.degtrn"/>
+			<property description="Payment_TimeStamp" expression="json-eval($.TransDate)" name="uri.var.formatteddtm"/>
+			<property description="netAmount" expression="json-eval($.Amount)" name="uri.var.amt"/>
+			
+	
+	        <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+			
+			 	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	
+        	<!-- At this point, we are ready to call DSG generatePaymentToken API -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+          			
+			<!-- Create the request body for the  DSG getPaymentTokendetails API-->
+			<!-- Create the request body for the  DSG getPaymentTokendetails API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+                    "Sptrn" : "$1",
+					"TransDate" : "$2",
+					"Amount" : "$3",
+					"Currency" : "AED",
+					"SERVCode" : "$4",
+					"SPCODE" : "MBRL",
+					"DegTrn" : "$5",
+					"StatusCode" : "$6",
+					"Status" : "$7",
+					"PaymentMethod" : "CREDITCARD",
+					"PaymentMethodCode" : 10000
+			   }
+            	</format>
+				
+			<args>
+              <arg expression="get-property('uri.var.sptrn')"/>
+              <arg expression="get-property('uri.var.formatteddtm')"/>
+              <arg expression="get-property('uri.var.amt')"/>
+              <arg expression="get-property('uri.var.servcode')"/>
+              <arg expression="get-property('uri.var.degtrn')"/>
+              <arg expression="get-property('uri.var.pcode')"/>
+              <arg expression="get-property('uri.var.ptext')"/>
+
+            </args>
+         	</payloadFactory>
+			
+			<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.base_url_nds_payment" expression="get-property('base_url_nds_payment')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 get payment confirm delivery API uri -->
+         	<property name="uri.var.uri_wso2_add_transaction" expression="get-property('uri_wso2_add_transaction')" scope="default" type="STRING"/>
+         	<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.base_url_nds_payment}{+uri.var.uri_wso2_add_transaction}"/>
+            	</endpoint>
+            </call>
+			<property name="HTTP_SC" value="200" scope="axis2"/>
+			<respond/>
+		    </case>
+		
+		
+		<case regex=".*/updatePaymentTransaction">
+		
+            
+			<property description="Payment_Status_Code" expression="json-eval($.StatusCode)" name="uri.var.pcode"/>
+            <property description="Payment_Status_Text" expression="json-eval($.Status)" name="uri.var.ptext"/>
+            <property description="Payment_Status_sptrn" expression="json-eval($.Sptrn)" name="uri.var.sptrn"/>
+            <property description="Payment_Service_Code" expression="json-eval($.SERVCode)" name="uri.var.servcode"/>
+			<property description="Payment_DegTrn_Code" expression="json-eval($.DegTrn)" name="uri.var.degtrn"/>
+			<property description="Payment_TimeStamp" expression="json-eval($.TransDate)" name="uri.var.formatteddtm"/>
+			<property description="guidresponse" expression="json-eval($.GUID)" name="uri.var.guid"/>
+			<property description="netAmount" expression="json-eval($.Amount)" name="uri.var.amt"/>
+			
+	
+			
+			
+	    	<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+			
+			 	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	
+        	<!-- At this point, we are ready to call DSG generatePaymentToken API -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+          			
+			<!-- Create the request body for the  DSG getPaymentTokendetails API-->
+			<!-- Create the request body for the  DSG getPaymentTokendetails API-->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+                    "Sptrn" : "$1",
+					"TransDate" : "$2",
+					"Amount" : "$3",
+					"Currency" : "AED",
+					"SERVCode" : "$4",
+					"SPCODE" : "MBRL",
+					"DegTrn" : "$5",
+					"StatusCode" : "$6",
+					"Status" : "$7",
+					"PaymentMethod" : "CREDITCARD",
+					"PaymentMethodCode" : 10000,
+					"GUID" : "$8"
+                }
+            	</format>
+				
+			<args>
+              <arg expression="get-property('uri.var.sptrn')"/>
+              <arg expression="get-property('uri.var.formatteddtm')"/>
+              <arg expression="get-property('uri.var.amt')"/>
+              <arg expression="get-property('uri.var.servcode')"/>
+              <arg expression="get-property('uri.var.degtrn')"/>
+              <arg expression="get-property('uri.var.pcode')"/>
+              <arg expression="get-property('uri.var.ptext')"/>
+			  <arg expression="get-property('uri.var.guid')"/>
+            </args>
+         	</payloadFactory>
+			
+			<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.base_url_nds_payment" expression="get-property('base_url_nds_payment')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 get payment confirm delivery API uri -->
+         	<property name="uri.var.uri_wso2_update_transaction" expression="get-property('uri_wso2_update_transaction')" scope="default" type="STRING"/>
+			
+			<log description="" level="custom">
+                <property name="Request Body" expression="json-eval($.)"/>
+            </log>
+			
+					
+			<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.base_url_nds_payment}{+uri.var.uri_wso2_update_transaction}"/>
+            	</endpoint>
+            </call>
+			<property name="HTTP_SC" value="200" scope="axis2"/>
+			<respond/>
+           </case>
+         
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args></args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>
+</sequence>

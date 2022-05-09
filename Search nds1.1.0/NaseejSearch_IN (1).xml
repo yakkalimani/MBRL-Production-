@@ -1,0 +1,453 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="NaseejSearch_IN">
+	<!-- get the requuest postfix -->
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+    <!-- get the NDS base url -->
+    <property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>	
+	<property name="faultUrl" expression="get-property('To')"/>
+    <!-- determine which URI was called -->
+    <switch source="get-property('To')">
+    	<!-- Search API Logic -->
+		<case regex=".*/search">
+			 <!-- get the query json request param -->
+			<property description="uri.var.searchquery" expression="json-eval($.query)" name="uri.var.searchquery"/> 
+            <!-- check whether the x-sirs-sessionToken has been defined and the user is logged in -->
+            <filter source="boolean($trp:x-sirs-sessionToken)" regex="true">
+				<then>
+					<!-- ############################################### -->
+					<!-- #### DECODE AND VALIDATE JWT TOKEN ############ -->
+					<!-- ############################################### -->
+					
+					<!-- retrieve the value of x-sirs-sessionToken parameter into uri.var.isidtoken property -->
+    				<property description="uri.var.isidtoken" name="uri.var.isidtoken" expression="$trp:x-sirs-sessionToken"/>
+    				
+    				<!-- run a script to extract the user claims portion of the JWT --> 
+    				<script language="js" key="conf:/extractUserClaimsFromJwtToken.js" function="transform"/>
+            		<!-- check that the JWT extraction javascript has run successfully.-->
+            		<filter source="get-property('jwt_result')" regex="success">
+						<then>
+            				<!-- incase of javascript running successfully, based 64 decode the user cliams -->
+            				<property expression="base64Decode($ctx:uri.var.tokenidclaims)" name="uri.var.decodedtokenidclaims" scope="default" type="STRING"/>
+    						<!-- run a script to check that the provided userId is equal to the userId in the JWT --> 
+    						<script language="js" key="conf:/extractUserIdFromJwtToken.js" function="transform"/>
+    						<filter source="get-property('uri.var.favuserid')" regex="null">
+    							<then>
+    								<!-- incase of javascript failing, return an error back to the client -->
+    								<payloadFactory media-type="json">
+                					<format>{"statusCode": 401, "statusMsg" : "invalid x-sirs-sessionToken header value passed"}</format>
+                					<args/>
+            						</payloadFactory>
+            						<property name="HTTP_SC" value="401" scope="axis2"/>
+            						<loopback/>
+    							</then>
+    						</filter>
+    					</then>
+    					<else>
+    						<!-- incase of javascript failing, return an error back to the client -->
+    						<payloadFactory media-type="json">
+                			<format>{"statusCode": 401, "statusMsg" : "invalid x-sirs-sessionToken header value passed"}</format>
+                			<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="401" scope="axis2"/>
+            				<loopback/>
+    					</else>
+    				</filter>
+    				
+    				<!-- ################################################# -->
+    				<!-- ########## END OF JWT TOKEN LOGIC ############### -->
+    				<!-- ################################################# -->
+					
+					<!-- store the original request payload -->
+					<property description="original_payload" expression="json-eval($.)" name="uri.var.origpayload"/>
+					<!-- store the original x-sirs-sessionToken header -->
+					<property name="uri.var.sessiontoken" expression="get-property('transport', 'x-sirs-sessionToken')"/>
+					<!-- remobe the x-sirs-session-token header parameter -->
+					<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+					<!-- get the WSO2 API Manager admin user consumer key -->
+    				<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    				<!-- get the WSO2 API Manager admin user consumer secret -->
+    				<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    				<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+					<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    				<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    				<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    				<!-- set the WSO2 Authorization header -->
+            		<header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           			<!-- Create request body for token API in x-www-form-urlencoded format -->
+           			<payloadFactory media-type="xml">
+            			<format>
+               				<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  			<soapenv:Body>
+                     		<root xmlns="">
+                        	<grant_type>$1</grant_type>
+                     		</root>
+                  			</soapenv:Body>
+               				</soapenv:Envelope>
+            			</format>
+            			<args>
+            	 			<arg value="client_credentials"/>
+            			</args>
+         			</payloadFactory>
+         			<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         			<!-- Get the WSO@ token base url -->
+         			<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         			<!-- Get the wso2 token API uri -->
+         			<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         			<call blocking="true">
+            			<endpoint>
+                			<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            			</endpoint>
+        			</call>
+        			<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        			<property name="wso2_token" expression="//access_token/text()"/>
+        	
+        			<!-- At this point, we are ready to call NDS get favourites API -->
+            		<header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            		<header name="Content-Type" value="application/json" scope="transport"/>
+            		<header name="x-sirs-sessionToken" expression="get-property('uri.var.sessiontoken')" scope="transport"/>
+            		<property name="messageType" value="application/json" scope="axis2"/>
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            		
+            		<!-- Get the wso2 API gateway base url -->
+         			<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+         			<!-- Get the WSO2 Get User Favourites API URI -->
+         			<property name="uri.var.amuserfavouritesuri" expression="get-property('uri_wso2_nds_favourites')" scope="default" type="STRING"/>
+            		<!-- call the NDS get favourites API -->
+					
+            		<call blocking="true">
+        				<endpoint>
+            				<http method="GET" uri-template="{+uri.var.amgatewaybase}/nds/user/1.1.0/favourite/getUserFavouriteById/{+uri.var.favuserid}"/>
+        				</endpoint>
+    				</call>
+    				
+    				<!-- Check that the response from the user favourites API is success -->
+           			<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            			<then>
+               				<property name="uri.var.payload" expression="json-eval($.)"/>		      					
+							<!-- repopulate the original request payload -->
+							<payloadFactory media-type="json">
+                				<format>$1</format>
+                				<args>
+                					<arg expression="get-property('uri.var.origpayload')"/>
+                				</args>
+            				</payloadFactory>
+            				<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+							<switch source="get-property('transport', 'x-sirs-locale')">
+								<case regex="en_US|en">
+									<header name="lang" value="eng" scope="transport"/>
+									<property name="faultLang" value="en"/>
+								</case>
+								<case regex="ar_SA|ar">
+									<header name="lang" value="ara" scope="transport"/>
+									<property name="faultLang" value="ar"/>
+								</case>
+								<default>
+									<header name="lang" value="eng" scope="transport"/>
+									<property name="faultLang" value="en"/>
+								</default>
+							</switch>
+							<!-- remove the x-sirs-locale header parameter -->
+							<property action="remove" name="x-sirs-locale" scope="transport"/>
+							<!-- get the search API endpoint URI -->
+							<property name="uri.var.searchuri" expression="get-property('uri_nds_search')" scope="default" type="STRING"/>
+							<!-- send call to search NDS endpoint -->	
+                           	<property name="NO_KEEPALIVE" scope="axis2" value="true"/>			
+			 				<call blocking="true">
+                				<endpoint>
+                    				<http method="POST" uri-template="{+uri.var.base}{+uri.var.searchuri}"/>
+                				</endpoint>
+            				</call>
+            				<!-- check that the response from search API is empty -->
+            				<filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+								<then>
+									<property name="HTTP_SC" value="200" scope="axis2"/>							
+									<payloadFactory media-type="json">
+									<format>
+									{
+    									"resultCount": 0,
+    									"results": [],
+    									"facets": [],
+    									"didYouMean": ""
+									}
+									</format>												
+									</payloadFactory>						   
+									<respond/>
+								</then>
+							</filter>
+            				<!-- check that the response from search API is successful -->
+							<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+								<then>
+									<!-- get the search response -->
+									<property name="uri.var.searchresponse" expression="json-eval($.)"/>
+								</then>
+								<!-- Else, the book search has failed -->
+								<else>
+									<payloadFactory media-type="json">
+										<format>{"statusCode": 400, "statusMsg" : "Failed to execute item search."}</format>
+										<args/>
+									</payloadFactory>
+									<property name="HTTP_SC" value="400" scope="axis2"/>
+									<loopback/>
+								</else>
+							</filter>		
+               			</then>
+               			<else>
+               				<payloadFactory media-type="json">
+                			<format>{"statusCode": 400, "statusMsg" : "Failed to get user favourites"}</format>
+                			<args/>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="400" scope="axis2"/>
+            				<loopback/>
+               			</else>	
+               		</filter>
+               		<loopback/>
+				</then>
+				<else>
+					<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+					<switch source="get-property('transport', 'x-sirs-locale')">
+						<case regex="en_US|en">
+							<header name="lang" value="eng" scope="transport"/>
+							<property name="faultLang" value="en"/>
+						</case>
+						<case regex="ar_SA|ar">
+							<header name="lang" value="ara" scope="transport"/>
+							<property name="faultLang" value="ar"/>
+						</case>
+						<default>
+							<header name="lang" value="eng" scope="transport"/>
+							<property name="faultLang" value="en"/>
+						</default>
+					</switch>
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+					<!-- remove the x-sirs-locale header parameter -->
+					<property action="remove" name="x-sirs-locale" scope="transport"/>
+					<!-- get the search API endpoint URI -->
+					<property name="uri.var.searchuri" expression="get-property('uri_nds_search')" scope="default" type="STRING"/>
+					<property name="NO_KEEPALIVE" scope="axis2" value="true"/>
+					<!-- send call to search NDS endpoint -->
+			 		<call blocking="true">
+                		<endpoint>
+                    		<http method="POST" uri-template="{+uri.var.base}{+uri.var.searchuri}"/>
+                		</endpoint>
+            		</call>
+            		<!-- check that the response from search API is empty -->
+            		<filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+						<then>
+							<property name="HTTP_SC" value="200" scope="axis2"/>							
+							<payloadFactory media-type="json">
+							<format>
+							{
+    							"resultCount": 0,
+    							"results": [],
+    							"facets": [],
+    							"didYouMean": ""
+							}
+							</format>												
+							</payloadFactory>						   
+							<respond/>
+						</then>
+					</filter>
+            		<!-- check that the response from search API is successful -->
+					<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+						<then>
+							<!-- get the search response -->
+							<property name="uri.var.searchresponse" expression="json-eval($.)"/>
+						</then>
+						<!-- Else, the recommended items API has failed -->
+						<else>
+							<payloadFactory media-type="json">
+								<format>{"statusCode": 400, "statusMsg" : "Failed to execute item search."}</format>
+								<args/>
+							</payloadFactory>
+							<property name="HTTP_SC" value="400" scope="axis2"/>
+							<loopback/>
+						</else>
+					</filter>		
+            	</else>
+			</filter>
+			<loopback/>
+        </case>
+        <!-- Autocomplete API Logic -->
+        <case regex=".*/autocomplete?.*">
+        	<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+			<switch source="get-property('transport', 'x-sirs-locale')">
+				<case regex="en_US|en">
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="faultLang" value="en"/>
+				</case>
+				<case regex="ar_SA|ar">
+					<header name="lang" value="ara" scope="transport"/>
+					<property name="faultLang" value="ar"/>
+				</case>
+				<default>
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="faultLang" value="en"/>
+				</default>
+			</switch>
+			<!-- remove the x-sirs-locale header parameter -->
+			<property action="remove" name="x-sirs-locale" scope="transport"/>
+			<!-- get the getItemById API endpoint URI -->
+			<property name="uri.var.autocompleteuri" expression="get-property('uri_nds_autocomplete')" scope="default" type="STRING"/>
+			<!-- Get query url parameter -->
+			<property name="uri.var.query" expression="$url:query"/>
+			<!-- Get policyID url parameter -->
+			<property name="uri.var.policyID" expression="$url:policyID"/>
+			<!-- Set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send call to Autocomplete NDS endpoint -->
+			
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.autocompleteuri}?query={uri.var.query}"/>
+                </endpoint>
+            </send>
+		</case>
+		 <!-- PolicyLookupList API Logic -->
+        <case regex=".*/policyLookupList.*">
+        	<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+			<switch source="get-property('transport', 'x-sirs-locale')">
+				<case regex="en_US|en">
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="uri.var.lang" value="eng"/>
+					<property name="faultLang" value="en"/>
+				</case>
+				<case regex="ar_SA|ar">
+					<header name="lang" value="ara" scope="transport"/>
+					<property name="uri.var.lang" value="ara"/>
+				</case>
+				<default>
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="uri.var.lang" value="eng"/>
+					<property name="faultLang" value="en"/>
+				</default>
+			</switch>
+			<!-- remove the x-sirs-locale header parameter -->
+			<property action="remove" name="x-sirs-locale" scope="transport"/>
+			<!-- get the getItemById API endpoint URI -->
+			<property name="uri.var.policylookupuri" expression="get-property('uri_nds_lookupList')" scope="default" type="STRING"/>
+			<!-- Set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send call to Autocomplete NDS endpoint -->
+			<property name="NO_KEEPALIVE" scope="axis2" value="true"/>
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.policylookupuri}/{uri.var.lang}"/>
+                </endpoint>
+            </send>
+		</case>
+		<!-- PolicyLookupList API Logic -->
+        <case regex=".*/searchLookup/.*">
+        	<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->		
+			<switch source="get-property('transport', 'x-sirs-locale')">
+				<case regex="en_US|en">
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="uri.var.lang" value="eng"/>
+					<property name="faultLang" value="en"/>
+				</case>
+				<case regex="ar_SA|ar">
+					<header name="lang" value="ara" scope="transport"/>
+					<property name="uri.var.lang" value="ara"/>
+				</case>
+				<default>
+					<header name="lang" value="eng_ar" scope="transport"/>
+					<property name="uri.var.lang" value="eng_ar"/>
+					<property name="faultLang" value="en"/>
+				</default>
+			</switch>
+			
+			<!-- remove the x-sirs-locale header parameter -->
+			<property action="remove" name="x-sirs-locale" scope="transport"/>
+			<!-- get the getItemById API endpoint URI -->
+			<property name="uri.var.policylookupuri" expression="get-property('uri_nds_lookupList')" scope="default" type="STRING"/>
+			<!-- Set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send call to Autocomplete NDS endpoint -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			
+			<filter source="get-property('uri.var.lang')" regex="eng|ara">
+				<then>
+				<property name="NO_KEEPALIVE" scope="axis2" value="true"/>
+					<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.policylookupuri}/{uri.var.policyID}/{uri.var.lang}"/>
+                </endpoint>
+            </send>
+				</then>
+			</filter>
+			<filter source="get-property('uri.var.lang')" regex="eng_ar">
+				<then>
+					<call blocking="true">
+						<endpoint>
+							<http method="GET" uri-template="{+uri.var.base}{+uri.var.policylookupuri}/{uri.var.policyID}/eng"/>
+						</endpoint>
+					</call>
+					<property description="Search_lookup_lang_eng" expression="json-eval($.)" name="Search_lookup_lang_eng"/> 			
+					<enrich>
+						<source type="body" clone="true"/>
+						<target type="property" property="first-json"/>
+					</enrich>				
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+					 <call blocking="true">
+						<endpoint>
+							<http method="GET" uri-template="{+uri.var.base}{+uri.var.policylookupuri}/{uri.var.policyID}/ara"/>
+						</endpoint>
+					</call>
+					<enrich>
+						<source type="body" clone="true"/>
+						<target type="property" property="second-json"/>
+					</enrich>			
+					<payloadFactory media-type="xml">
+						<format>
+						   <completeJson xmlns="">
+							  <firstjson>$1</firstjson>					 
+							  <secondjson>$2</secondjson>
+						   </completeJson>
+						</format>
+						<args>
+							<arg evaluator="xml" expression="get-property('first-json')"/>
+							<arg evaluator="xml" expression="get-property('second-json')"/>				   	
+						</args>
+					</payloadFactory>  
+					<property name="JSONPayload" expression="json-eval($.)"/>	
+					<property name="status" expression="get-property('axis2', 'HTTP_SC')"/>
+					<filter source="get-property('status')" regex="200">
+						<then>					 
+							<script language="js" key="conf:/genSearchLookupResponse.js" function="transform"/>			
+							<property expression="get-property('generatedResponse')" name="generatedResponse"/>
+								<payloadFactory media-type="json">
+									<format>$1</format>
+										<args>
+										   <arg expression="get-property('generatedResponse')"/>				   
+										</args>
+								 </payloadFactory>			 
+							 <property name="messageType" value="application/json" scope="axis2"/>
+							 <respond/>
+						 </then>
+					 </filter>			
+					<filter source="get-property('status')" regex="204">
+						<then>
+							<payloadFactory media-type="json">
+								<format>{"statusCode": 200, "statusMsg" : "No content"}</format>
+								<args/>
+							</payloadFactory>
+							<property name="HTTP_SC" value="200" scope="axis2"/>
+							<loopback/>
+						</then>
+					</filter>
+				</then>
+			</filter>
+		</case>
+        <!-- return error message if the requested resource is none of the above -->
+		<default>
+            <payloadFactory media-type="json">
+            	<format>{"statusCode": 400, "statusMsg" : "Failed to get requested resource"}</format>
+            	<args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="400" scope="axis2"/>
+            <loopback/>
+        </default>
+    </switch>
+</sequence>

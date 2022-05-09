@@ -1,0 +1,408 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="SymphonySecurity_IN">
+    <!-- get the request URI postfix -->
+	<property name="requestURLI" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+	<!-- get the base url for symphony at nginx -->
+	<property name="uri.var.base" expression="get-property('base_url_symphony')" scope="default" type="STRING"/>
+	<log level="custom">
+	<property name="Base_URL"  expression="get-property('uri.var.base')"/>
+	</log>
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	<!-- derive the locale variable based on the value of the x-sirs-locale header parameter -->
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="uri.var.locale" value="ar"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+	<!-- remove the x-sirs-locale header parameter -->
+	<property action="remove" name="x-sirs-locale" scope="transport"/>
+	<!-- set the x-sirs-locale header parameter -->
+	<header name="x-sirs-locale" expression="get-property('uri.var.locale')" scope="transport"/>
+	<!-- determine which API is being called -->
+    <switch source="get-property('axis2', 'REST_URL_POSTFIX')">
+    	<!-- Logic for login Symphony API -->
+		<case regex=".*/user/login?.*">
+			<!-- check that the password has been set -->
+			<filter source="boolean($url:password)" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Missing query parameter: password"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            		<!-- <respond></respond> -->
+				</then>
+			</filter>
+			<!-- check that the login parameter has been set -->
+			<filter source="boolean($url:login)" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Missing query parameter: login"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            		<!-- <respond></respond> -->
+				</then>
+			</filter>				
+			<!-- retrieve the query parameters original sent -->
+			<script language="js"><![CDATA[
+				var reqUri = mc.getProperty("requestURLI");
+				var queryParams = String(reqUri).substr(12);
+				mc.setProperty("queryParams", queryParams);	 
+			]]>
+			</script>
+			<property name="uri.var.params" expression="get-property('queryParams')"/>
+			<!-- get URI for symphony login API -->
+			<property name="uri.var.uri" expression="get-property('uri_nginx_symph_login')" scope="default" type="STRING"/>					
+			<!-- set message type to application/json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<header name="Accept" value="application/json" scope="transport"/>
+			<property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN"/>
+            <!-- send actual request to endpoint -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?json=true&amp;jsonPOST=true&amp;{+uri.var.params}"/>
+                </endpoint>
+            </send>
+        </case>
+        <!-- logic for logout symphony API -->
+        <case regex=".*/user/logout?.*">
+            <!-- check that the x-sirs-session token has been set -->
+            <filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Missing header parameter: x-sirs-sessionToken"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            		<!-- <respond></respond> -->
+				</then>
+			</filter>
+			<!-- set the message type to application/json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<!-- get the uri for the logout API -->
+			<property name="uri.var.uri" expression="get-property('uri_nginx_symph_logout')" scope="default" type="STRING"/>
+			<!-- set the accept header to JSON -->
+			<header name="Accept" value="application/json" scope="transport"/>
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN"/>
+            <!-- send the request to actual endpoint -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?json=true&amp;jsonPOST=true"/>
+                </endpoint>
+            </send>
+        </case>
+		
+		<case regex=".*/user/casLogin?.*">
+			<filter source="boolean($trp:x-sirs-clientID)" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Missing header parameter: x-sirs-clientID"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>            		
+				</then>
+			</filter>
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<property name="uri.var.uri" expression="get-property('uri_nginx_symph_casLogin')" scope="default" type="STRING"/>
+			<property name="uri.var.ticket" expression="$url:ticket"/>
+			<property name="uri.var.serviceParam" expression="get-property('symphony_cas_service')" scope="default" type="STRING"/>
+			<property name="uri.var.validateUrlParam" expression="get-property('symphony_cas_validateUrl')" scope="default" type="STRING"/>
+			<property name="uri.var.jsonParam" expression="get-property('symphony_cas_json')" scope="default" type="STRING"/>
+			<header name="Accept" value="application/json" scope="transport"/>
+			<header name="Content-Type" value="application/json" scope="transport"/>
+			<property name="FORCE_POST_PUT_NOBODY" value="true" scope="axis2" type="BOOLEAN"/>
+			<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?ticket={+uri.var.ticket}&amp;service={+uri.var.serviceParam}&amp;validateUrl={+uri.var.validateUrlParam}&amp;json=true"/>
+                </endpoint>
+            </send>
+			
+		</case>
+		<!-- *************************************** -->
+		<!-- *** Logic for cas login to symphony *** -->
+		<!-- *************************************** -->
+		<case regex=".*/user/cas/login.*">
+		
+			<!-- *********************************************** -->
+			<!-- ******** GET The Header PARAMETERS ************ -->
+			<!-- *********************************************** -->
+			
+			<!-- Check that x-sirs-sessionToken Mandatory header parameter exists -->
+			<filter source="boolean(get-property('transport', 'x-sirs-sessionToken'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Mandatory request header parameters not defined: x-sirs-sessionToken"}</format>
+                	<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+				<else>
+					<property description="uri.var.sessiontoken" name="uri.var.sessiontoken" expression="get-property('transport', 'x-sirs-sessionToken')"/>
+					<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+				</else>
+			</filter>
+			
+			<!-- Check that x-sirs-clientID Mandatory header parameter exists -->
+			<filter source="boolean(get-property('transport', 'x-sirs-clientID'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Mandatory request header parameters not defined: x-sirs-clientID"}</format>
+                	<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+				<else>
+					<property description="uri.var.clientid" name="uri.var.clientid" expression="get-property('transport', 'x-sirs-clientID')"/>
+					<property action="remove" name="x-sirs-clientID" scope="transport"/>
+				</else>
+			</filter>
+			
+			<!-- ******************************************************* -->
+            <!-- ******** GET WSO2 API MANAGER ACCESS TOKEN ************ -->
+            <!-- ******************************************************* -->
+			
+			<!-- remove url postfix -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+			           	
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	<!-- set the Authorization header parameter to the WSO2 Access token -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            
+            <property name="DISABLE_COOKIE" value="true" scope="axis2" type="BOOLEAN"/>
+            
+            <!-- ************************************************* -->
+            <!-- ******** CALL CAS REDIRECT REQUEST 1 ************ -->
+            <!-- ************************************************* -->
+            
+            <!-- Get WSO2 API gateway base url -->
+            <property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>        
+            <!-- set the content-type to application/json -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <!-- set the message type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- remove the request url postfix -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <property name="uri.var.val" expression="get-property('symphony_cas_validateUrl')" scope="default" type="STRING"/> 
+            <property name="uri.var.concat" expression="fn:concat(get-property('uri.var.val'),'?service=')"/>
+            <property name="uri.var.ser" expression="get-property('symphony_cas_service')" scope="default" type="STRING"/> 
+            
+            <!-- Set the redirection url location as x-sirs-location header parameter -->
+            <header name="x-sirs-location" expression="fn:concat(get-property('uri.var.concat'),get-property('uri.var.ser'))" scope="transport"/>
+            
+            <!-- set the uri of the first redirection -->
+            <property name="uri.var.redirecturi" value="/identity/security/1.1.0/user/cas/redirect"/>
+            <!-- Make the call to the first redirection url -->
+            <call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.redirecturi}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Get the response of the first API and check that it is valid -->
+            <property description="uri.var.location2" expression="json-eval($.redirection)" name="uri.var.location2" scope="default" type="STRING"/>
+
+            <!-- Check if a valid response and redirection has been returned  -->
+            <filter source="get-property('uri.var.location2')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to login to symphony"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- ************************************************* -->
+            <!-- ******** CALL CAS REDIRECT REQUEST 2 ************ -->
+            <!-- ************************************************* -->
+            
+            <!-- set the content-type to application/json -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <!-- set the message type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- remove the request url postfix -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <!-- Set the redirection url location as x-sirs-location header parameter -->
+            <header name="x-sirs-location" expression="get-property('uri.var.location2')" scope="transport"/>
+            
+            <log level="custom">
+            	<property expression="get-property('uri.var.location2')" name="debug_location2"/>
+            </log> 
+            <!-- Set the x-sirs-sessionToken header parameter -->
+            <header name="x-sirs-sessionToken" expression="get-property('uri.var.sessiontoken')" scope="transport"/> 
+            <!-- Make the call to the second redirection url -->
+            <call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.redirecturi}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Get the response of the second API and check that it is valid -->
+            <property description="uri.var.location3" expression="json-eval($.redirection)" name="uri.var.location3" scope="default" type="STRING"/>
+
+            <!-- Check if a valid response and redirection has been returned  -->
+            <filter source="get-property('uri.var.location3')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to login to symphony"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- ************************************************* -->
+            <!-- ******** CALL CAS REDIRECT REQUEST 3 ************ -->
+            <!-- ************************************************* -->
+            
+            <!-- set the content-type to application/json -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <!-- set the message type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- remove the request url postfix -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <!-- Set the redirection url location as x-sirs-location header parameter -->
+            <header name="x-sirs-location" expression="get-property('uri.var.location3')" scope="transport"/> 
+            <log level="custom">
+            	<property expression="get-property('uri.var.location3')" name="debug_location3"/>
+            </log> 
+            <!-- remove the x-sirs-sessionToken header parameter -->
+            <property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+            <!-- Make the call to the third redirection url -->
+            <call blocking="true">
+                <endpoint>
+                	<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.redirecturi}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- Get the response of the third API and check that it is valid -->
+            <property description="uri.var.location4" expression="json-eval($.redirection)" name="uri.var.location4" scope="default" type="STRING"/>
+            
+             <log level="custom">
+            	<property expression="get-property('uri.var.location4')" name="debug_location4"/>
+            </log> 
+
+            <!-- Check if a valid response and redirection has been returned  -->
+            <filter source="get-property('uri.var.location4')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to login to symphony"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            <!-- run a javascript to extract the CAS ticket from the response -->
+            <script language="js" key="conf:/extractCASTicket110.js" function="transform"/>
+            <!-- check that a valid cas ticket has been successfully extracted -->
+             <!-- Check if a valid response and redirection has been returned  -->
+             
+            <log level="custom">
+            	<property expression="get-property('uri.var.casticket')" name="debug_ticket"/>
+            </log> 
+             
+            <filter source="get-property('uri.var.casticket')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to login to symphony"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- ********************************************* -->
+            <!-- ******** CALL Symphony CAS Login ************ -->
+            <!-- ********************************************* -->
+            
+            <!-- set the content-type to application/json -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <!-- set the message type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- remove the request url postfix -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <!-- set the uri for symphony cas login -->
+			<property name="uri.var.uri" expression="get-property('uri_nginx_symph_casLogin')" scope="default" type="STRING"/>
+			<!-- derive the property of the service parameter from synapse.xml -->
+			<property name="uri.var.serviceParam" expression="get-property('symphony_cas_service')" scope="default" type="STRING"/>
+			<!-- derive the prpoerty of the validateUrlParam from xynapse.xml -->
+			<property name="uri.var.validateUrlParam" expression="get-property('symphony_cas_validateUrl')" scope="default" type="STRING"/>
+			<!-- set the accept header to application/json -->
+			<header name="Accept" value="application/json" scope="transport"/>
+			<!-- set the x-sirs-clientID header -->
+			<header name="x-sirs-clientID" expression="get-property('uri.var.clientid')" scope="transport"/>
+			<!-- Call the actual Symphony cas login API -->
+			<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?ticket={uri.var.casticket}&amp;service={+uri.var.serviceParam}&amp;validateUrl={+uri.var.validateUrlParam}&amp;json=true"/>
+                </endpoint>
+            </send>
+		</case>
+        <!-- else if none of the supported endpoints are called, return an error -->
+		<default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+            		<!-- <respond></respond> -->
+        </default>
+    </switch>
+</sequence>

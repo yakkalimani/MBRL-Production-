@@ -1,0 +1,39 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LiferayNotificationsSeq_OUT">
+	
+	<property name="faultUrl" expression="get-property('faultUrl')"/>
+	<property name="string" expression="json-eval($.message)" type="STRING"/>    
+	<filter source="get-property('string')" regex="Invalid Request|Unable to get the Content|Token already exist|Error while processing request">
+        <then>
+            <property name="error_message_2" expression="json-eval($.message)"/>
+            <property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+            <filter regex="false" source="get-property('error_message_2_bool')">
+                <then>
+                    <property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+                </then>
+            </filter>
+            <sequence key="customErrorHandling"/>
+        </then>		
+    </filter>
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="400">
+        <then>        
+        	<property name="error_message_1" expression="json-eval($.responseCode)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<property name="error_message_2" expression="json-eval($.message)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+        		</then>
+					<else>      			
+					<filter regex="false" source="get-property('error_message_2_bool')">
+        				<then>
+        					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+        				</then>
+        			</filter>
+					</else>
+        	</filter>
+        	<sequence key="customErrorHandling"/>
+        </then>
+    </filter>
+	<send/>
+</sequence>

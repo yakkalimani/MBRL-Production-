@@ -1,0 +1,547 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="ItemByIdRecomendedRecentlyAdded_IN">
+    <!-- Get the request URI and store it in requestURL -->
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+    <!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<header name="lang" value="eng" scope="transport"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<header name="lang" value="ara" scope="transport"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<header name="lang" value="eng" scope="transport"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+	<!-- remove the x-sirs-locale header parameter -->
+	<property action="remove" name="x-sirs-locale" scope="transport"/>	
+	<!-- determine the called request API -->
+	<switch source="get-property('To')">
+        <!-- Logic for getITemById API -->
+        <case regex=".*/item/.*">
+        	<!-- Get the arEnabledDocumentIds property from synapse.xml -->
+        	<property name="arEnabledDocumentIds" expression="get-property('arEnabledDocumentIds')" scope="default" type="STRING"/>
+        	<!-- Get the ArBookType property from synapse.xml -->
+        	<property name="uri.var.artype" expression="get-property('arBookType')" scope="default" type="STRING"/>
+        	<filter source="boolean(get-property('transport', 'x-sirs-sessionToken'))" regex="true">
+				<then>
+					
+					<!-- ############################################### -->
+					<!-- #### DECODE AND VALIDATE JWT TOKEN ############ -->
+					<!-- ############################################### -->
+					
+					<!-- retrieve the value of x-sirs-sessionToken parameter into uri.var.isidtoken property -->
+    				<property description="uri.var.isidtoken" name="uri.var.isidtoken" expression="get-property('transport', 'x-sirs-sessionToken')"/>
+    				
+    				<!-- run a script to extract the user claims portion of the JWT --> 
+    				<script language="js" key="conf:/extractUserClaimsFromJwtToken.js" function="transform"/>
+            		<!-- check that the JWT extraction javascript has run successfully.-->
+            		<filter source="get-property('jwt_result')" regex="success">
+						<then>
+            				<!-- incase of javascript running successfully, based 64 decode the user cliams -->
+            				<property expression="base64Decode($ctx:uri.var.tokenidclaims)" name="uri.var.decodedtokenidclaims" scope="default" type="STRING"/>
+    						<!-- run a script to check that the provided userId is equal to the userId in the JWT --> 
+    						<script language="js" key="conf:/extractUserIdFromJwtToken.js" function="transform"/>
+    						<filter source="get-property('uri.var.favuserid')" regex="null">
+    							<then>
+    								<!-- incase of javascript failing, return an error back to the client -->
+    								<payloadFactory media-type="json">
+                					<format>{"statusCode": 401, "statusMsg" : "invalid x-sirs-sessionToken header value passed"}</format>
+                					<args></args>
+            						</payloadFactory>
+            						<property name="HTTP_SC" value="401" scope="axis2"/>
+            						<loopback/>
+    							</then>
+    						</filter>
+    					</then>
+    					<else>
+    						<!-- incase of javascript failing, return an error back to the client -->
+    						<payloadFactory media-type="json">
+                			<format>{"statusCode": 401, "statusMsg" : "invalid x-sirs-sessionToken header value passed"}</format>
+                			<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="401" scope="axis2"/>
+            				<loopback/>
+    					</else>
+    				</filter>
+    				
+    				<!-- ################################################# -->
+    				<!-- ########## END OF JWT TOKEN LOGIC ############### -->
+    				<!-- ################################################# -->
+				
+					<!-- get the WSO2 API Manager admin user consumer key -->
+    				<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    				<!-- get the WSO2 API Manager admin user consumer secret -->
+    				<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    				<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+					<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    				<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    				<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    				<!-- set the WSO2 Authorization header -->
+            		<header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+           	
+           			<!-- Create request body for token API in x-www-form-urlencoded format -->
+           			<payloadFactory media-type="xml">
+            			<format>
+               				<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  			<soapenv:Body>
+                     		<root xmlns="">
+                        	<grant_type>$1</grant_type>
+                     		</root>
+                  			</soapenv:Body>
+               				</soapenv:Envelope>
+            			</format>
+            			<args>
+            	 			<arg value="client_credentials"/>
+            			</args>
+         			</payloadFactory>
+         			<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+         			
+         			<!-- Get the WSO@ token base url -->
+         			<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         			<!-- Get the wso2 token API uri -->
+         			<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         			<call blocking="true">
+            			<endpoint>
+                			<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            			</endpoint>
+        			</call>
+        			<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        			<property name="wso2_token" expression="//access_token/text()"/>
+        	
+        			<!-- At this point, we are ready to call NDS get favourites API -->
+            		<header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            		<header name="Content-Type" value="application/json" scope="transport"/>
+            		<property name="messageType" value="application/json" scope="axis2"/>
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            		
+            		<!-- Get the wso2 API gateway base url -->
+         			<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+            		<property name="uri.var.wso2ndsfavoritesuri" expression="get-property('uri_wso2_nds_favourites')" scope="default" type="STRING"/>
+            		
+
+    				<header name="x-sirs-sessionToken" expression="get-property('uri.var.isidtoken')" scope="transport"/>
+    				
+            		<!-- call the NDS get favourites API -->
+            		<call blocking="true">
+        				<endpoint>
+            				<http method="GET" uri-template="{+uri.var.amgatewaybase}/nds/user/1.1.0/favourite/getUserFavouriteById/{+uri.var.favuserid}"/>
+        				</endpoint>
+    				</call>
+    				
+    				<!-- Check that the response from user Favourites is successful -->
+           			<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            			<then>
+						
+               				<property name="uri.var.payload" expression="json-eval($.)"/>		      					
+            				
+            				<!-- derive the lang header parameter based on the passed x-sirs-locale header value -->
+							<switch source="get-property('transport', 'x-sirs-locale')">
+								<case regex="en_US|en">
+									<header name="lang" value="eng" scope="transport"/>
+									<property name="faultLang" value="en"/>
+								</case>
+								<case regex="ar_SA|ar">
+									<header name="lang" value="ara" scope="transport"/>
+									<property name="faultLang" value="ar"/>
+								</case>
+								<default>
+									<header name="lang" value="eng" scope="transport"/>
+									<property name="faultLang" value="en"/>
+								</default>
+							</switch>
+							<!-- get the NDS Base URL -->
+							<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+							<!-- get the getItemById API URI -->
+							<property name="uri.var.uri" expression="get-property('uri_nds_getItemById')" scope="default" type="STRING"/>
+							<!-- set the accept header parameter -->
+            				<header name="Accept" value="*/*" scope="transport"/>
+            				<!-- set content type, message types and reomve postfix -->
+            				<header name="Content-Type" value="application/json" scope="transport"/>
+            				<property name="messageType" value="application/json" scope="axis2"/>
+            				<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            				<!-- send to actual endpoint -->
+            				<send>
+            					<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}/{+uri.var.id}"/>
+                				</endpoint>
+            				</send>
+               			</then>
+               			<else>
+               				<payloadFactory media-type="json">
+                				<format>{"statusCode": 400, "statusMsg" : "Failed to retrieve user favourites"}</format>
+                				<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="400" scope="axis2"/>
+            				<loopback/>
+               			</else>	
+               		</filter>	
+    			</then>
+				<else>
+					<!-- get the NDS Base URL -->
+					<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+					<!-- get the getItemById API URI -->
+					<property name="uri.var.uri" expression="get-property('uri_nds_getItemById')" scope="default" type="STRING"/>
+					<!-- set the accept header parameter -->
+            		<header name="Accept" value="*/*" scope="transport"/>
+            		<!-- set content type, message types and reomve postfix -->
+            		<header name="Content-Type" value="application/json" scope="transport"/>
+            		<property name="messageType" value="application/json" scope="axis2"/>
+            		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>					
+            		<!-- send to actual endpoint -->
+            		<send>
+            			<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}/{+uri.var.id}"/>
+                		</endpoint>
+            		</send>
+            	</else>
+            </filter>                          
+        </case>
+        <!-- logic for recently added items -->
+        <case regex=".*/recentlyAdded.*">
+			<!-- get the value of x-sirs-sessionToken header parameter and set it to Authorization header -->
+			<property expression="get-property('transport', 'x-sirs-sessionToken')" name="x-sirs-sessionToken" scope="default" type="STRING"/>
+			<property expression="get-property('x-sirs-sessionToken')" name="Authorization" scope="transport" type="STRING"/>
+			<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+			<!-- get the last days query parameter -->
+			<property name="uri.var.lastDays" expression="$url:lastDays"/>					
+			<!-- get the NDS Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			<!-- get the recently added NDS API URI -->
+			<property name="uri.var.uri" expression="get-property('uri_nds_recentlyAdded')" scope="default" type="STRING"/>
+			<!-- set the accept header parameter -->
+			<header name="Accept" value="*/*" scope="transport"/>
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- call request to actual endpoint -->
+            <call blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?lastDays={uri.var.lastDays}"/>
+                </endpoint>
+            </call>
+            
+            <!-- check that the response of recently added is empty -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+				<then>
+					<property name="HTTP_SC" value="200" scope="axis2"/>							
+					<payloadFactory media-type="json">
+						<format>[]</format>												
+					</payloadFactory>						   
+					<respond/>
+				</then>
+			</filter>
+            
+            <!-- check that the response from recently added API is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+				<then>
+					<!-- get the recently added response -->
+					<property name="uri.var.recentlyaddedresponse" expression="json-eval($.)"/>
+					<send/>		
+				</then>
+				<else>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to get recently added items"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</else>
+        	</filter>		
+        </case>
+        <case regex=".*/recommended/groups?.*">
+        
+        	<!-- Get value of all query parameters -->
+			<property name="uri.var.number" expression="$url:number"/>
+			<property name="uri.var.subjectaeng" expression="$url:subjectA_Eng"/>
+			<property name="uri.var.subjectaara" expression="$url:subjectA_Ara"/>
+			<property name="uri.var.subjectbeng" expression="$url:subjectB_Eng"/>
+			<property name="uri.var.subjectbara" expression="$url:subjectB_Ara"/>
+			<property name="uri.var.subjectceng" expression="$url:subjectC_Eng"/>
+			<property name="uri.var.subjectcara" expression="$url:subjectC_Ara"/>
+			<property name="uri.var.allowdup" expression="$url:allowDuplicates"/>
+			<property name="uri.var.documentid" expression="$url:documentId"/>
+        
+        	<!-- get the WSO2 API Manager admin user consumer key -->
+			<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+			<!-- get the WSO2 API Manager admin user consumer secret -->
+			<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+			<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+			<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+			<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+			<!-- set the WSO2 Authorization header -->
+			<header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+
+			<!-- Create request body for token API in x-www-form-urlencoded format -->
+			<payloadFactory media-type="xml">
+				<format>
+					<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+					<soapenv:Body>
+					<root xmlns="">
+					<grant_type>$1</grant_type>
+					</root>
+					</soapenv:Body>
+					</soapenv:Envelope>
+				</format>
+				<args>
+					<arg value="client_credentials"/>
+				</args>
+			</payloadFactory>
+			<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+
+			<!-- Get the WSO@ token base url -->
+			<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+			<!-- Get the wso2 token API uri -->
+			<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+
+			<call blocking="true">
+				<endpoint>
+					<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+				</endpoint>
+			</call>
+			<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+			<property name="wso2_token" expression="//access_token/text()"/>
+
+			<!-- At this point, we are ready to call NDS get favourites API -->
+			<header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+			
+			<!-- derive the lang header parameter based on the x-sirs-locale header parameter -->
+			<switch source="get-property('transport', 'x-sirs-locale')">
+				<case regex="en_US|en">
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="faultLang" value="en"/>
+				</case>
+				<case regex="ar_SA|ar">
+					<header name="lang" value="ara" scope="transport"/>
+					<property name="faultLang" value="ar"/>
+				</case>
+				<default>
+					<header name="lang" value="eng" scope="transport"/>
+					<property name="faultLang" value="en"/>
+				</default>
+			</switch>
+			<!-- remove the x-sirs-locale header parameter -->
+			<property action="remove" name="x-sirs-locale" scope="transport"/>			
+			<!-- remove the x-sirs-sessionToken header parameter -->
+			<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+			<!-- set the accept header parameter -->	
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- Get the wso2 API gateway base url -->
+			<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+			<!-- get the wso2 nds recommended items API URI -->
+			<property name="uri.var.uri" expression="get-property('uri_wso2_nds_recommended')" scope="default" type="STRING"/>
+			
+			<!-- Set messageType to JSON and remove original request postfix -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			
+			<filter source="get-property('transport', 'lang')" regex="ara">
+				<then>
+					<filter source="boolean(boolean(get-property('uri.var.subjectaeng')) and 
+                            boolean(get-property('uri.var.subjectaara')))" regex="true">
+						<then>
+							<call blocking="true">
+                				<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}?subjectA={uri.var.subjectaara}&amp;subjectB={uri.var.subjectaeng}&amp;number={uri.var.number}"/>
+                				</endpoint>
+            				</call>
+						</then>
+						<else>
+							 <payloadFactory media-type="json">
+                				<format>{"statusCode": 400, "statusMsg" : "Mandatory request query parameters not defined: subjectA_Eng and subjectA_Ara"}</format>
+                				<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="400" scope="axis2"/>
+            				<loopback/>
+						</else>
+					</filter>
+				</then>
+				<else>
+					<filter source="boolean(boolean(get-property('uri.var.subjectaeng')) and 
+                            boolean(get-property('uri.var.subjectaara')))" regex="true">
+						<then>
+							<call blocking="true">
+                				<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}?subjectA={uri.var.subjectaeng}&amp;subjectB={uri.var.subjectaara}&amp;number={uri.var.number}"/>
+                				</endpoint>
+            				</call>
+						</then>
+						<else>
+							 <payloadFactory media-type="json">
+                				<format>{"statusCode": 400, "statusMsg" : "Mandatory request query parameters not defined: subjectA_Eng and subjectA_Ara"}</format>
+                				<args></args>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="400" scope="axis2"/>
+            				<loopback/>
+						</else>
+					</filter>
+				</else>
+			</filter>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		 <property description="recommended_response_1" expression="json-eval($.)" name="response1"/>
+            	</then>
+            </filter>
+            
+            <!-- Logic for Subject B -->
+            
+            <!-- Set messageType to JSON and remove original request postfix -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            
+            <filter source="get-property('transport', 'lang')" regex="ara">
+				<then>
+					<filter source="boolean(boolean(get-property('uri.var.subjectbeng')) and 
+                            boolean(get-property('uri.var.subjectbara')))" regex="true">
+						<then>
+							<call blocking="true">
+                				<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}?subjectA={uri.var.subjectbara}&amp;subjectB={uri.var.subjectbeng}&amp;number={uri.var.number}"/>
+                				</endpoint>
+            				</call>
+						</then>
+					</filter>
+				</then>
+				<else>
+					<filter source="boolean(boolean(get-property('uri.var.subjectbeng')) and 
+                            boolean(get-property('uri.var.subjectbara')))" regex="true">
+						<then>
+							<call blocking="true">
+                				<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}?subjectA={uri.var.subjectbeng}&amp;subjectB={uri.var.subjectbara}&amp;number={uri.var.number}"/>
+                				</endpoint>
+            				</call>
+						</then>
+					</filter>
+				</else>
+			</filter>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<filter source="boolean(boolean(get-property('uri.var.subjectbeng')) and 
+                            boolean(get-property('uri.var.subjectbara')))" regex="true">
+                        <then>
+            		 		<property description="recommended_response_2" expression="json-eval($.)" name="response2"/>
+            		 	</then>
+            		 </filter>
+            	</then>
+            </filter>
+            
+             <!-- Logic for Subject C -->
+            
+            <!-- Set messageType to JSON and remove original request postfix -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            
+            <filter source="get-property('transport', 'lang')" regex="ara">
+				<then>
+					<filter source="boolean(boolean(get-property('uri.var.subjectceng')) and 
+                            boolean(get-property('uri.var.subjectcara')))" regex="true">
+						<then>
+							<call blocking="true">
+                				<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}?subjectA={uri.var.subjectcara}&amp;subjectB={uri.var.subjectceng}&amp;number={uri.var.number}"/>
+                				</endpoint>
+            				</call>
+						</then>
+					</filter>
+				</then>
+				<else>
+					<filter source="boolean(boolean(get-property('uri.var.subjectceng')) and 
+                            boolean(get-property('uri.var.subjectcara')))" regex="true">
+						<then>
+							<call blocking="true">
+                				<endpoint>
+                    				<http method="GET" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}?subjectA={uri.var.subjectceng}&amp;subjectB={uri.var.subjectcara}&amp;number={uri.var.number}"/>
+                				</endpoint>
+            				</call>
+						</then>
+					</filter>
+				</else>
+			</filter>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+            	<then>
+            		<filter source="boolean(boolean(get-property('uri.var.subjectceng')) and 
+                            boolean(get-property('uri.var.subjectcara')))" regex="true">
+                        <then>
+            		 		<property description="recommended_response_3" expression="json-eval($.)" name="response3"/>
+            		 	</then>
+            		 </filter>
+            	</then>
+            </filter>
+           
+        </case>
+    	<!-- logic for recommeded Items -->
+		<case regex=".*/recommended?.*">
+			<!-- get the document id query parameter if specified -->
+			<property name="uri.var.documentid" expression="$url:documentId"/>
+            <!-- get the value of x-sirs-sessionToken header parameter and set it to Authorization header -->                
+			<property expression="get-property('transport', 'x-sirs-sessionToken')" name="x-sirs-sessionToken" scope="default" type="STRING"/>
+			<property expression="get-property('x-sirs-sessionToken')" name="Authorization" scope="transport" type="STRING"/>
+			<property action="remove" name="x-sirs-sessionToken" scope="transport"/>
+			<!-- get the NDS Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			<!-- get the recently added NDS API URI -->
+			<property name="uri.var.uri" expression="get-property('uri_nds_recommendedItems')" scope="default" type="STRING"/>		
+			<!-- set the accept header parameter -->	
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- Get first subject url parameter -->
+			<property name="uri.var.subjectA" expression="$url:subjectA"/>
+			<!-- Get second subject url parameter -->
+			<property name="uri.var.subjectB" expression="$url:subjectB"/>
+			<!-- Get third subject url parameter -->
+			<property name="uri.var.subjectC" expression="$url:subjectC"/>
+			<!-- Get number of items to return url parameter -->
+			<property name="uri.var.number" expression="$url:number"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- call request to actual endpoint -->		
+			<call blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?subjectA={uri.var.subjectA}&amp;subjectB={uri.var.subjectB}&amp;subjectC{uri.var.subjectC}&amp;number={uri.var.number}"/>
+                </endpoint>
+            </call>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="204">
+				<then>
+					<property name="HTTP_SC" value="200" scope="axis2"/>							
+					<payloadFactory media-type="json">
+						<format>[]</format>												
+					</payloadFactory>						   
+					<respond/>
+				</then>
+			</filter>
+			
+			<!-- check that the response from recommended items API is successful -->
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+				<then>
+					<!-- get the recommended items response -->
+					<property name="uri.var.recommendedresponse" expression="json-eval($.)"/>
+					<send/>			
+				</then>
+				<!-- Else, the recommended items API has failed -->
+				<else>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to get recommended items"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+				</else>
+        	</filter>		
+        </case>
+        <!-- Incase any other resource has been requested -->
+		<default>
+			<payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args></args>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+		</default>
+    </switch>
+</sequence>

@@ -1,0 +1,183 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LiferayNotificationsSeq110_IN">
+	<!-- Get the liferay base url -->
+	<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+	<!-- derive the locale parameter based on the x-sirs-locale header parameter -->
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="uri.var.locale" value="ar"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+   	<!-- Deterimine which URI is being Called -->
+   	<switch source="get-property('To')">
+       	<!-- Logic for notification list info API -->
+       	<case regex=".*/notificationListInfo?.*">
+			<!-- Get the Liferay notification list info API URI -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_getNotifications')" scope="default" type="STRING"/>
+			<!-- Get the user id query parameter -->
+			<property name="uri.var.userId" expression="$url:userId"/>
+			<!-- Set Accept tp anything -->
+			<header name="Accept" value="*/*" scope="transport"/>	
+			<!-- remove request uri postfix -->							
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>	
+			<!-- send request to actual liferay backend end-point -->				
+			<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?userUniqueId={uri.var.userId}&amp;locale={uri.var.locale}"/>
+                </endpoint>
+            </send>
+		</case>
+		<!-- logic for Mark notification as Read API -->
+        <case regex=".*/markRead">	
+        	<!-- Set the message type to application/json -->			
+            <property name="messageType" value="application/json" scope="axis2"/>
+			<!-- get the user id from the request body payload -->
+			<property name="userId" expression="json-eval($.userId)"/>
+			<!-- get the notification id from the request body payload -->
+			<property name="notificationIds" expression="json-eval($.notificationIds)"/>
+			<!-- set Accept header to anything -->
+	 		<header name="Accept" value="*/*" scope="transport"/>
+			<!-- get the sent notification as read API url at Liferay back-end -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_mark_notif_read')" scope="default" type="STRING"/>
+			<!-- set request JSON payload of the message -->
+			<payloadFactory media-type="json">
+				<format>
+				{
+					"userUniqueId":"$1",
+					"notificationIds":$2
+				}
+				</format>
+				<args>
+					<arg evaluator="json" expression="$.userId"/>
+					<arg evaluator="json" expression="$.notificationIds"/>						   
+				</args>
+			</payloadFactory>
+			<!-- send request to actual liferay backend end-point -->	
+			<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </send>				
+        </case>
+        <!-- Logic for add notifications -->
+        <case regex=".*/add.*">
+        	<!-- Set the message type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- get the userId from the JSON request body payload --> 
+			<property name="userId" expression="json-eval($.userId)"/>
+			<!-- get the notification id from the JSON request body payload -->
+			<property name="notifications" expression="json-eval($.notifications)"/>
+			<!-- Set Accept header to anything -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- get the add notification API base uri for Liferay back-end -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_addNotification')" scope="default" type="STRING"/>
+			<!-- set request JSON payload of the message -->
+			<payloadFactory media-type="json">
+				<format>
+				{
+					"userUniqueId":"$1",
+					"notifications":$2
+				}
+				</format>
+				<args>
+					<arg evaluator="json" expression="$.userId"/>
+					<arg evaluator="json" expression="$.notifications"/>						   
+				</args>
+			</payloadFactory>
+			<!-- send request to actual liferay backend end-point -->
+			<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </send>						
+        </case>
+        <!-- Send push notification API Logic -->
+		<case regex=".*/send.*">
+			<!-- Set the message Type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- get the userId from the JSON request payload -->
+			<property name="userId" expression="json-eval($.userId)"/>
+			<!-- get the message type from JSON request payload -->
+			<property name="messageType" expression="json-eval($.messageType)"/>
+			<!-- Set Accept header to anything -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- Get the send push notification liferay end-point uri -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_sendNotification')" scope="default" type="STRING"/>
+			<!-- set the request JSON request payload -->
+			<payloadFactory media-type="json">
+				<format>
+				{
+					"userUniqueIds":$1,
+					"messageType":"$2",
+					"locale":"$3"
+				}
+				</format>
+				<args>
+					<arg evaluator="json" expression="$.userId"/>
+					<arg evaluator="json" expression="$.messageType"/>	
+					<arg expression="get-property('uri.var.locale')"/>						
+				</args>
+			</payloadFactory>
+			<!-- send request to actual back-end -->						
+			<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </send>				
+        </case>
+        <!-- logic for regiser Device for push notification API -->
+		<case regex=".*/registerDevice">
+			<!-- set the message type to application/json -->
+        	<property name="messageType" value="application/json" scope="axis2"/>
+			<!-- get the token parameter from the request JSON payload -->
+			<property name="token" expression="json-eval($.token)"/>
+			<!-- Get the platform parameter from the request JSON payload -->
+			<property name="platform" expression="json-eval($.platform)"/>
+			<!-- Get the userId parameter from the request JSON -->
+			<property name="userId" expression="json-eval($.userId)"/>
+			<!-- Set the accept header parameter to anything -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- get the register device API liferay endpoint uri -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_registerNotification')" scope="default" type="STRING"/>
+			<!-- set the actual request JSON payload -->
+			<payloadFactory media-type="json">
+				<format>
+				{
+					"token":"$1",
+					"platform":"$2",
+					"userUniqueId":"$3"
+				}
+				</format>
+				<args>
+					<arg evaluator="json" expression="$.token"/>
+					<arg evaluator="json" expression="$.platform"/>
+					<arg evaluator="json" expression="$.userId"/>
+				</args>
+			</payloadFactory>
+			<!-- send the actual request to liferay endpoint -->						
+			<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+            	</endpoint>
+            </send>					
+        </case>
+        <!-- return error if none of the supported WSO2 endpoints for Push Notifications was called -->
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>
+</sequence>

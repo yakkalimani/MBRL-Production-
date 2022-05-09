@@ -1,0 +1,39 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="ExtendedPatronInfo_IN">
+
+<header description="SOAPAction" name="SOAPAction" scope="transport" value="http://tempuri.org/IPatrons/Search"/>
+
+<property name="SearchField" expression="$url:SearchField"/>
+<property name="SearchType" expression="$url:SearchType"/>
+<property name="SearchValue" expression="$url:SearchValue"/>
+<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+
+<payloadFactory description="transform" media-type="xml">
+  <format>
+  <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/" xmlns:ns="http://schemas.datacontract.org/2004/07/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <tem:Search>
+         <!--Optional:-->
+         <tem:request>
+            <!--Optional:-->
+            <ns:SearchField>$1</ns:SearchField>
+            <!--Optional:-->
+            <ns:SearchType>$2</ns:SearchType>
+            <!--Optional:-->
+            <ns:SearchValue>$3</ns:SearchValue>
+         </tem:request>
+      </tem:Search>
+   </soapenv:Body>
+</soapenv:Envelope>
+</format>
+  
+  <args>
+    <arg expression="$url:SearchField"/>
+    <arg expression="$url:SearchType"/>
+	<arg expression="$url:SearchValue"/>
+  </args>
+</payloadFactory>
+
+<property description="messageProperty" name="messageType" scope="axis2" type="STRING" value="application/soap+xml"/>
+
+</sequence>

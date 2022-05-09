@@ -1,0 +1,181 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="IdentityServer_OUT">
+	<property name="messageType" value="application/json" scope="axis2"/>
+	<property expression="get-property('requestURL')" name="request" scope="transport" type="STRING"/>
+	
+	<filter source="get-property('transport', 'request')" regex=".*/user/validateUsername?.*">
+		<then>
+			<property name="responseStatus" expression="json-eval($.statusCode)" scope="default" type="STRING"/>
+			<filter source="get-property('responseStatus')" regex="60002">
+				<then>
+					<payloadFactory media-type="json">
+						<format>
+						{	 
+							"status": true									
+						}
+						</format>
+						<args/>
+					</payloadFactory>
+				</then>
+				<else>					
+					<payloadFactory media-type="json">
+						<format>
+						{	 
+							"status": false									
+						}
+						</format>
+						<args/>
+					</payloadFactory>					
+				</else>
+			</filter>
+		</then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/user/changePassword?.*">
+		<then>
+			<property name="DISABLE_COOKIE" value="true" scope="axis2" type="BOOLEAN"/>
+			<property name="Set-Cookie" scope="transport" action="remove"/>
+			<property name="Cookie" scope="transport" action="remove"/>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="^([3-9][0-9][0-9])$">
+				<then>
+					<property name="error_message_1" expression="json-eval($.description)"/>
+					<filter source="get-property('error_message_1')" regex="null">
+						<then>
+							<property name="error_message_1" expression="json-eval($.UserAdminUserAdminException.UserAdminException.message)"/>
+						</then>
+					</filter>
+				</then>
+			</filter>
+		</then>
+	</filter>
+	
+	<!-- ***************************************************** -->
+	<!-- logic to handle the response from set user claims API -->
+	<!-- ***************************************************** -->	
+	
+	<filter source="get-property('transport', 'request')" regex=".*/user/setClaim.*">
+		<then>
+			<!-- Get the response code of the set user claim value API call -->
+			<property name="uri.var.responsecode" expression="get-property('axis2', 'HTTP_SC')"/>
+			
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="202">
+				<!-- if successful, return a successful message -->
+				<then>
+					<payloadFactory media-type="json">
+					<format>{"statusCode": 202, "statusMsg" : "user claim value Updated Successfully"}</format>
+					<args/>
+					</payloadFactory>
+					<property name="HTTP_SC" value="200" scope="axis2"/>
+				</then>
+				<!-- if it has failed, return the corresponding error code and message -->
+				<else>
+					<payloadFactory media-type="json">
+					<format>{"statusCode": $1, "statusMsg" : "Failed to update user claim value"}</format>
+					<args>
+						<arg expression="get-property('uri.var.responsecode')"/>
+					</args>
+					</payloadFactory>
+				</else>
+			</filter>
+		</then>
+	</filter>
+	<!--  Handling of reponses from /user/cas/redirect -->
+	<filter source="get-property('transport', 'request')" regex=".*/user/cas/redirect">
+		<then>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="302">
+				<then>
+					<filter source="boolean(get-property('transport', 'Location'))" regex="false">
+						<then>
+							<payloadFactory media-type="json">
+							<format>{"statusCode": 400, "statusMsg" : "Unsuccessful cas login"}</format>
+							<args/>
+							</payloadFactory>
+							<property name="HTTP_SC" value="400" scope="axis2"/>
+						</then>
+						<else>
+							<property description="uri.var.location" name="uri.var.location" expression="get-property('transport', 'Location')"/>
+							<payloadFactory media-type="json">
+							<format>{"redirection": "$1"}</format>
+							<args>
+								<arg expression="get-property('uri.var.location')"/>
+							</args>
+							</payloadFactory>
+							<property name="HTTP_SC" value="200" scope="axis2"/>
+						</else>
+					</filter>
+				</then>
+			</filter>
+		</then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/user/mobile/token">
+        <then>
+            <filter source="get-property('axis2', 'HTTP_SC')" regex="400">
+                <then>
+                    <send/>
+                </then>
+            </filter>
+        </then>
+    </filter>
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="^([3-9][0-9][0-9])$">
+        <then>
+        	<property name="error_message_2" expression="json-eval($.statusMsg)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_2_bool')">
+				<then>
+					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+				</then>
+				<else>
+					<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+				</else>
+			</filter>
+			<sequence key="customErrorHandling"/>
+        </then>
+    </filter>
+	<filter source="get-property('transport', 'request')" regex=".*/user/mobile/uaePassLogin?.*">
+		<then>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="400">
+				<then>
+					<payloadFactory media-type="json">
+					<format>{"statusCode": 400, "statusMsg" : "Invalid authorization code received from token request"}</format>
+					<args/>
+					</payloadFactory>
+					<property name="HTTP_SC" value="200" scope="axis2"/>
+				</then>
+			</filter>
+		</then>
+	</filter>
+	
+	<filter source="get-property('transport', 'request')" regex=".*/user/mobile/login.*">
+		<then>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="201">
+				<then>
+					<property value="Unsuccessful login" name="faultMsg" type="STRING"/>
+					<property name="FAULT_STATUS" value="500"/>
+					<property name="HTTP_SC" value="500" scope="axis2"/>
+					<sequence key="customErrorHandling"/>
+				</then>
+			</filter>
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="202">
+				<then>
+					<property value="User not verified" name="faultMsg" type="STRING"/>
+					<property name="FAULT_STATUS" value="500"/>
+					<property name="HTTP_SC" value="500" scope="axis2"/>
+					<sequence key="customErrorHandling"/>
+				</then>
+			</filter>
+		</then>
+	</filter>
+	
+	<!--<filter source="get-property('faultUrl')" regex=".*/user/refresh.*">
+		 <then>
+		 	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+		<then>
+			<send/>
+		</then>
+			<else>
+				<property value="Oops,something went wrong!" name="faultMsg" type="STRING"/>
+				<sequence key="customErrorHandling"/>
+			</else>
+			</filter>
+		 </then>
+	</filter>-->
+	<send/>
+</sequence>

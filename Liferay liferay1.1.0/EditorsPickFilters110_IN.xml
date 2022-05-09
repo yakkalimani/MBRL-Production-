@@ -1,0 +1,84 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="EditorsPickFilters110_IN">
+	<!-- Get the liferay base url -->
+	<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+	<!-- derive the liferay locale variable based on the value of the x-sirs-locale header parameter -->
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="uri.var.locale" value="ar"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+	<!-- determine the called URI -->
+    <switch source="get-property('To')">
+    	<!-- logic for library recommendations API -->
+    	<case regex=".*/editorsPickInfo?.*">						
+			<!-- get the uri for the library recommendations endpoint in liferay -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_lib_recommendations')" scope="default" type="STRING"/>
+			<!-- set the Accept parameter to any value -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send to actual endpoint -->
+			<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?locale={uri.var.locale}"/>
+                </endpoint>
+            </send>													
+        </case>
+        <!-- logic for filterList API -->
+        <case regex=".*/filterList">
+			<!-- get the uri for filterList API at liferay -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_lib_filters')" scope="default" type="STRING"/>
+            <!-- set the Accept parameter to any value -->
+            <header name="Accept" value="*/*" scope="transport"/>
+            <!-- send to actual endpoint -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?locale={uri.var.locale}"/>
+                </endpoint>
+            </send> 
+		</case>
+		 <!-- logic for trending subjects API -->										
+		<case regex=".*/trendingSubjects">
+			<!-- get the uri for trending subjects API at liferay endpoint -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_trending_subjects')" scope="default" type="STRING"/>
+			<!-- set the Accept parameter to any value -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send to actual endpoint -->
+			<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}?locale={uri.var.locale}"/>
+                </endpoint>
+            </send>  
+		</case>
+		<!-- Logic for location listing API -->
+		<case regex=".*/locationList">
+			<!-- Get the uri of the lostion listing API from synapse.xml -->
+			<property name="uri.var.locationlisturi" expression="get-property('uri_lr_locationListing')" scope="default" type="STRING"/>
+			<!-- set the Accept parameter to any value -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send to actual endpoint -->
+			<send blocking="true">
+                <endpoint>
+                    <http method="GET" uri-template="{+uri.var.base}{+uri.var.locationlisturi}?locale={uri.var.locale}"/>
+                </endpoint>
+            </send>  
+		</case>
+		<!-- return error message if none of the supported APIs are called -->							
+        <default>
+        	<payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>    
+</sequence>

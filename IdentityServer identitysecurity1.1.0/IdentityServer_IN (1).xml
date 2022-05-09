@@ -1,0 +1,1185 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="IdentityServer_IN">
+	<!-- get the request URI postfix -->
+	<property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>
+	<!-- get the base url of WSO2 IS -->
+	<property name="uri.var.base" expression="get-property('base_url_IS')" scope="default" type="STRING"/>
+	<!-- get the faultURL for error message handling -->
+	<property name="faultUrl" expression="get-property('To')"/>
+	<!-- Identity server userName and password -->
+	<property name="wso2_is_username" expression="get-property('wso2_IS_Admin')" scope="default" type="STRING"/>
+	<property name="wso2_is_password" expression="get-property('wso2_IS_Admin_password')" scope="default" type="STRING"/>
+	<!-- Generate Basic Auth credential -->
+	<property name="wso2iscredentials" expression="fn:concat($ctx:wso2_is_username,':',$ctx:wso2_is_password)" scope="default" type="STRING"/>
+	<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+	<property name="auth_header" expression="fn:concat('Basic ', base64Encode($ctx:wso2iscredentials))" scope="default" type="STRING"/>
+	<property name="AuthorizationHeader" expression="get-property('auth_header')" scope="default"/>	
+	<switch source="get-property('transport', 'x-sirs-locale')">
+        <case regex="en_US|en">
+            <property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+            <property name="faultLang" value="en"/>
+        </case>
+        <case regex="ar_SA|ar">
+            <property name="uri.var.lang" value="ara" scope="default" type="STRING"/>
+            <property name="faultLang" value="ar"/>
+        </case>
+        <default>
+            <property name="uri.var.lang" value="eng" scope="default" type="STRING"/>
+            <property name="faultLang" value="en"/>
+        </default>
+    </switch>
+	<switch source="get-property('axis2', 'REST_URL_POSTFIX')">
+		<!-- logic for register  API -->
+		<case regex=".*/user/register">
+			<!-- set the message type to application/json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<!-- get the uri for the logout API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_register')" scope="default" type="STRING"/>
+			 <property name="POST_TO_URI" value="true" scope="axis2"/>
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2"/>
+			<!-- set the accept header to JSON -->			
+			<header name="Content-Type" value="application/json" scope="transport"/> 
+			<header name="Authorization" expression="get-property('AuthorizationHeader')" scope="transport"/>
+			<!-- get the callback url for user registration -->
+			<property name="uri.var.callback" expression="get-property('wso2IsCallbackUrl')" scope="default" type="STRING"/>
+			<!-- enrich the request payload by adding the properties array to the original request -->
+			<script language="js" key="conf:/enrichRegisterUserRequest110.js" function="transform"/>
+			<!-- send the request to actual endpoint -->
+			<send blocking="true">
+				<endpoint>
+					<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+				</endpoint>
+			</send>
+		</case>
+		<case regex=".*/user/validateUsername">
+			<!-- set the message type to application/json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<!-- get the uri for the validate API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_validate')" scope="default" type="STRING"/>
+			<property name="POST_TO_URI" value="true" scope="axis2"/>
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2"/>
+			<!-- set the accept header to JSON -->			
+			<header name="Content-Type" value="application/json" scope="transport"/> 
+			<header name="Authorization" expression="get-property('AuthorizationHeader')" scope="transport"/>			
+			<!-- send the request to actual endpoint -->
+			<send blocking="true">
+				<endpoint>
+					<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+				</endpoint>
+			</send>
+		</case>
+		<case regex=".*/user/getDetails">
+			<!-- set the message type to application/json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<!-- get the uri for the user details API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_userdetails')" scope="default" type="STRING"/>
+			 <property name="POST_TO_URI" value="true" scope="axis2"/>
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2"/>
+			<!-- set the accept header to JSON -->			
+			<header name="Content-Type" value="application/json" scope="transport"/> 
+			<header name="Authorization" expression="get-property('AuthorizationHeader')" scope="transport"/>			
+			<!-- send the request to actual endpoint -->
+			<send blocking="true">
+				<endpoint>
+					<http method="GET" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+				</endpoint>
+			</send>
+		</case>
+		<!-- Logic for actual login API -->
+		<case regex=".*/user/mobile/token">
+			<!-- remove url postfix -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+            <!-- get the WSO2 Identity Server Mobile App Consumer key -->
+			<property name="uri.var.isconsumerkey" expression="get-property('wso2_is_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 Identity Server Mobile App consumer secret -->
+			<property name="uri.var.isconsumersecret" expression="get-property('wso2_is_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "is_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.isconsumerkey,':',$ctx:uri.var.isconsumersecret)" name="is_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:is_credentials))" name="is_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 IS Authorization header -->
+            <header name="Authorization" expression="get-property('is_auth_header')" scope="transport"/>
+            <!-- get the username JSON payload request parameter and store it in uri.var.usernname property -->
+			<property description="uri.var.username" expression="json-eval($.username)" name="uri.var.username" scope="default" type="STRING"/>
+			<!-- Check that the uri.var.username parameter is null  -->
+            <filter source="get-property('uri.var.username')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected username parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+             <!-- get the password JSON payload request parameter and store it in uri.var.password property -->
+			<property description="uri.var.password" expression="json-eval($.password)" name="uri.var.password" scope="default" type="STRING"/>
+			<!-- Check that the uri.var.password parameter is null  -->
+            <filter source="get-property('uri.var.password')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected password parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                        <username>$2</username>
+                        <password>$3</password>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="password"/>
+            	 <arg expression="get-property('uri.var.username')"/>
+            	 <arg expression="get-property('uri.var.password')"/>
+            </args>
+         	</payloadFactory>
+         	<!-- set messageType to application/x-www-form-urlencoded -->
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<!-- Disable chunking -->
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<!-- get the uri for the mobile token API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_mobiletoken')" scope="default" type="STRING"/>
+         	<!-- send the request to the actual API -->
+         	<send>
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?scope=openid"/>
+            	</endpoint>
+        	</send>
+		</case>
+		
+		<!-- Logic for token API with authorization code grant type -->
+		<case regex=".*/user/mobile/uaePassToken?.*">
+			 <!-- get the code JSON payload request parameter and store it in uri.var.authcode property -->
+			<property description="uri.var.authcode" expression="json-eval($.code)" name="uri.var.authcode"/>
+			<!-- Check that the uri.var.authcode parameter is null  -->
+            <filter source="get-property('uri.var.authcode')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected code parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+			
+			<!-- Get the redirection url for uae pass login from synapse.xml -->
+			<property name="uri.var.redirecturi" expression="get-property('wso2IsUaePassCallbackUrl')" scope="default" type="STRING"/>
+			
+			<!-- Get the logintype request query parameter and store it in uri.var.logintype property as a string -->
+        	<property description="uri.var.logintype" expression="$url:logintype" name="uri.var.logintype"/>
+        	
+        	<switch source="get-property('uri.var.logintype')">
+        		<case regex="Mobile|mobile">
+        			<!-- get the WSO2 IS UAE Pass Mobile Service Provider consumer key -->
+    				<property name="uri.var.isuaepassconsumerkey" expression="get-property('wso2_is_uaepass_consumer_key')" scope="default" type="STRING"/> 			
+    				<!-- get the WSO2 IS UAE Pass Mobile Service Provider consumer secret -->
+    				<property name="uri.var.isuaepassconsumersecret" expression="get-property('wso2_is_uaepass_consumer_secret')" scope="default" type="STRING"/>			
+        		</case>
+        		<case regex="Web|web">
+        			<!-- get the WSO2 IS UAE Pass Mobile Service Provider consumer key -->
+    				<property name="uri.var.isuaepassconsumerkey" expression="get-property('wso2_is_uaepass_web_consumer_key')" scope="default" type="STRING"/> 			
+    				<!-- get the WSO2 IS UAE Pass Mobile Service Provider consumer secret -->
+    				<property name="uri.var.isuaepassconsumersecret" expression="get-property('wso2_is_uaepass_web_consumer_secret')" scope="default" type="STRING"/>
+        		</case>
+        		<default>
+        			<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter in request: logintype"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+        		</default>
+    		</switch>
+			
+			<!-- Concatenate the client key and client secret into the "is_sp_uaepass_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.isuaepassconsumerkey,':',$ctx:uri.var.isuaepassconsumersecret)" name="is_sp_uaepass_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:is_sp_uaepass_credentials))" name="is_sp_uaepass_auth_header" scope="default" type="STRING"/>
+    		<!-- set the Authorization header -->
+            <header name="Authorization" expression="get-property('is_sp_uaepass_auth_header')" scope="transport"/>
+			
+			<!-- remove url postfix -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+           
+           	<!-- Build the request body json for login to uae pass with authorization code grant -->
+			<payloadFactory media-type="xml">
+        	<format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                        <code>$2</code>
+                        <redirect_uri>$3</redirect_uri>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>            	
+				 <arg value="authorization_code"/>
+				 <arg expression="get-property('uri.var.authcode')"/>
+				 <arg expression="get-property('uri.var.redirecturi')"/>			           	 
+            </args>
+         	</payloadFactory>
+         	<!-- set messageType to application/x-www-form-urlencoded -->
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<!-- Disable chunking -->
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<!-- get the uri for the mobile token API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_mobiletoken')" scope="default" type="STRING"/>
+         	<!-- send the request to the actual API -->
+         	<send blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?scope=openid"/>
+            	</endpoint>
+        	</send>
+		</case>
+		<case regex=".*/user/mobile/introspect">
+			<!-- remove url postfix -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- get the x-sirs-sessionToken Header parameter and store it in uri.var.sessiontoken property. -->
+			<property name="uri.var.sessiontoken" expression="get-property('transport', 'x-sirs-sessionToken')" scope="default" type="STRING"/>
+			<!-- get the token JSON payload request parameter and store it in uri.var.sessiontoken property -->
+			<property description="uri.var.wso2istoken" expression="json-eval($.token)" name="uri.var.wso2istoken" scope="default" type="STRING"/>
+			<!-- Check that the uri.var.wso2istoken parameter is null  -->
+			<filter source="get-property('uri.var.wso2istoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected token parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            <!-- set the Authorization header value -->
+            <!-- <property expression="fn:concat('Basic ', $ctx:uri.var.sessiontoken)" name="is_auth_header" scope="default" type="STRING"/> -->
+			<property expression="fn:concat('Basic ', $ctx:uri.var.wso2istoken)" name="is_auth_header" scope="default" type="STRING"/>
+			<!-- set the WSO2 IS Authorization header -->
+            <header name="Authorization" expression="get-property('is_auth_header')" scope="transport"/>
+			<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <token>$1</token>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg expression="get-property('uri.var.wso2istoken')"/>
+            </args>
+         	</payloadFactory>
+         	<!-- set messageType to application/x-www-form-urlencoded -->
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<!-- Disable chunking -->
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<!-- get the uri for the mobile introspect API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_mobileintrospect')" scope="default" type="STRING"/>
+         	<!-- send the request to the actual API -->
+         	<send blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+            	</endpoint>
+        	</send>
+		</case>
+		<case regex=".*/user/mobile/login">
+		
+			<!-- ********************************************** -->
+			<!-- ******** GET JSON BODY PARAMETERS ************ -->
+			<!-- ********************************************** -->
+		
+			<!-- get the username JSON payload request parameter and store it in uri.var.usernname property -->
+			<property description="uri.var.username" expression="json-eval($.username)" name="uri.var.username" scope="default" type="STRING"/>
+			<!-- Check that the uri.var.username parameter is null  -->
+            <filter source="get-property('uri.var.username')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected username parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+             <!-- get the password JSON payload request parameter and store it in uri.var.password property -->
+			<property description="uri.var.password" expression="json-eval($.password)" name="uri.var.password" scope="default" type="STRING"/>
+			<!-- Check that the uri.var.password parameter is null  -->
+            <filter source="get-property('uri.var.password')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Expected password parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- ******************************************************* -->
+            <!-- ******** GET WSO2 API MANAGER ACCESS TOKEN ************ -->
+            <!-- ******************************************************* -->
+			
+			<!-- remove url postfix -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/>
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>          	
+           	<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>
+         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	<!-- set the Authorization header parameter to the WSO2 Access token -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            <!-- ******************************************** -->
+            <!-- ******** CALL WSO2 IS TOKEN API ************ -->
+            <!-- ******************************************** -->
+            
+            <!-- set the content-type to application/json -->
+            <header name="Content-Type" value="application/json" scope="transport"/>
+            <!-- set the message type to application/json -->
+            <property name="messageType" value="application/json" scope="axis2"/>
+            <!-- remove the request url postfix -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+        	<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+			<!-- Get the liferay API gateway base url -->
+			<property name="uri.var.liferay.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+        	
+        	 <payloadFactory media-type="json">
+            	<format>
+            	{
+					"username" : "$1",
+					"password" : "$2"
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.username')"/>
+            		<arg expression="get-property('uri.var.password')"/>
+            	</args>
+         	</payloadFactory>
+         	<!-- get the uri for the mobile login API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_mobilelogintoken')" scope="default" type="STRING"/>
+         	<!-- Make the actual API Call -->
+         	<call blocking="true">
+                <endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}"/>
+            	</endpoint>
+            </call>
+            
+            <!-- get the wso2 identity server access token -->
+            <property description="uri.var.istoken" expression="json-eval($.access_token)" name="uri.var.istoken"/>
+            <property description="uri.var.isidtoken" expression="json-eval($.id_token)" name="uri.var.isidtoken"/>
+            <property description="uri.var.refresh" expression="json-eval($.refresh_token)" name="uri.var.refresh"/>
+			<property description="uri.var.errorDesc" expression="json-eval($.error_description)" name="uri.var.errorDesc"/>
+            
+			<filter source="get-property('uri.var.errorDesc')" regex="^17005.*">
+            	<then>
+            		<property name="HTTP_SC" value="202" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if a valid identity server token was returned  -->
+            <filter source="get-property('uri.var.istoken')" regex="null">
+            	<then>
+            		<property name="HTTP_SC" value="201" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if a valid jwt token was returned  -->
+            <filter source="get-property('uri.var.isidtoken')" regex="null">
+            	<then>
+            		<property name="HTTP_SC" value="201" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- decode the id token and get the user claims -->            
+            <script language="js" key="conf:/decodeJWTToken.js" function="transform"/>
+            <property expression="base64Decode($ctx:uri.var.tokenidclaims)" name="uri.var.decodedtokenidclaims" scope="default" type="STRING"/>
+            
+            <!-- construct the response to send back to the client -->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+					"access_token" : "$1",
+					"refresh_token" : "$2",
+					"id_token" : "$3",
+					"id_token_claims" : $4
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.istoken')"/>
+            		<arg expression="get-property('uri.var.refresh')"/>
+            		<arg expression="get-property('uri.var.isidtoken')"/>
+            		<arg expression="get-property('uri.var.decodedtokenidclaims')"/>
+            	</args>
+         	</payloadFactory>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+			<!-- enrich payload -->
+			<enrich>
+				<source type="body"/>
+				<target type="property" property="payload"/>
+			</enrich>
+			
+			<!-- ************************************************* -->
+            <!-- ******* CALL LIFERAY CREATE USER API ************ -->
+            <!-- ************************************************* -->
+			
+			<payloadFactory media-type="json">
+				<format>{
+						"firstName":"$1",
+						"lastName":"$2",
+						"emailAddress":"$3",
+						"userRoles":[ "MBRL Library Member"],
+						"gender":"$4",
+						"userUniqueId":"$5"
+						}
+				</format>
+				<args>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.given_name)"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.family_name)"/>
+					<arg expression="get-property('uri.var.username')"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.gender)"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.userID)"/>
+				</args>
+			</payloadFactory>
+			<!-- get the uri for the sync liferay user API -->
+			<property name="uri.var.liferay.uri" expression="get-property('uri_IS_liferayusersync')" scope="default" type="STRING"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<call blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.liferay.base}{+uri.var.liferay.uri}"/>
+                </endpoint>
+            </call>
+			 <property description="statusCode" expression="json-eval($.statusCode)" name="statusCode" scope="default" type="STRING"/>
+			<filter source="get-property('statusCode')" regex="200">
+				<then>
+            		<property name="HTTP_SC" value="200" scope="axis2"/>
+					<!-- Get enrich paylaod-->
+					<enrich description="Restore original payload">
+						<source clone="false" property="payload" type="property"/>
+						<target type="body"/>
+					</enrich>
+            	</then>
+				<else>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to create/update user in Liferay"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+				</else>
+            </filter>
+            <loopback/>
+		</case>	
+		<case regex=".*/user/changePassword">
+			
+			<property name="Set-Cookie" scope="transport" action="remove"/>
+        	<property name="Cookie" scope="transport" action="remove"/>
+        	<property name="TRANSPORT_HEADERS" action="remove" scope="axis2"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<property name="uri.var.username" expression="json-eval($.username)" scope="default" type="STRING"/>
+			<property name="uri.var.oldPassword" expression="json-eval($.oldPassword)" scope="default" type="STRING"/>
+			<property name="uri.var.newPassword" expression="json-eval($.newPassword)" scope="default" type="STRING"/>
+			<!-- Concatenate the username and password into the "user_credentials" variable -->
+			<property expression="fn:concat(get-property('uri.var.username'),':',get-property('uri.var.oldPassword'))" name="user_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:user_credentials))" name="is_auth_header" scope="default" type="STRING"/>
+    		<!-- set the Authorization header -->
+            <header name="Authorization" expression="get-property('is_auth_header')" scope="transport"/>
+			<payloadFactory media-type="json">
+                <format/>
+                <args/>
+            </payloadFactory>
+			<!-- get the uri for the verify password API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_passwordverify')" scope="default" type="STRING"/>
+			<!-- call to verify old password -->
+			<call blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </call>
+			<!-- abort the flow for authentication failure -->
+			<filter source="get-property('axis2', 'HTTP_SC')" regex="^([3-9][0-9][0-9])$">
+				<then>
+					<loopback/>
+				</then>
+			</filter>
+			
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/> 			
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>			
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+			<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+			<!-- get the uri for the auth admin user API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_stattoken')" scope="default" type="STRING"/>
+        	<!-- set the Authorization header parameter to the WSO2 Access token -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+        	<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>			
+			<property name="Set-Cookie" scope="transport" action="remove"/>
+        	<property name="Cookie" scope="transport" action="remove"/>
+			<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}"/>
+            	</endpoint>
+        	</call>
+        	
+			<property name="uri.var.userAdmin" expression="get-property('uri_is_userAdmin')" scope="default" type="STRING"/>
+			<!-- Get response cokie header -->
+			<property name="Cookie" expression="$trp:Cookie"/>			
+			<!-- Set header informatio -->
+			<header name="Content-Type" value="text/xml" scope="transport"/> 
+			<header name="SOAPAction" value="urn:changePassword" scope="transport"/>
+			<header name="Cookie" expression="get-property('Cookie')" scope="transport"/>
+			<header name="Authorization" expression="get-property('AuthorizationHeader')" scope="transport"/>
+			<!-- Request payload -->
+           	<payloadFactory media-type="xml">
+            <format>
+				   <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://org.apache.axis2/xsd">
+					<soapenv:Header/>
+						<soapenv:Body>
+							<xsd:changePassword>						
+								<xsd:userName>PRIMARY/$1</xsd:userName>						
+								<xsd:newPassword>$2</xsd:newPassword>
+							</xsd:changePassword>
+						</soapenv:Body>
+					</soapenv:Envelope>
+            </format> 
+            <args>            	 
+				 <arg expression="get-property('uri.var.username')"/>
+				 <arg expression="get-property('uri.var.newPassword')"/>
+            </args>
+         	</payloadFactory>			
+			<!-- Send mediator -->
+			<send blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.base}{+uri.var.userAdmin}"/> 
+            	</endpoint>
+        	</send>			
+		</case>
+		<case regex=".*/authenticationAdmin">
+			<!-- IS credentials -->
+			<property name="wso2_IS_Admin" expression="get-property('wso2_IS_user')" scope="default" type="STRING"/>
+			<property name="wso2_IS_password" expression="get-property('wso2_IS_password')" scope="default" type="STRING"/>
+			<property name="wso2_IS_localhost" expression="get-property('wso2_IS_localhost')" scope="default" type="STRING"/>
+			<property name="uri.var.authenticationAdmin" expression="get-property('uri_is_authenticationAdmin')" scope="default" type="STRING"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- set header info -->
+			<header name="Content-Type" value="text/xml" scope="transport"/> 
+			<header name="SOAPAction" value="urn:login" scope="transport"/>			
+			<!-- Create request body -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://org.apache.synapse/xsd">
+                  <soapenv:Header/>
+				  <soapenv:Body>
+                     <aut:login xmlns:aut="http://authentication.services.core.carbon.wso2.org">
+                        <aut:username>$1</aut:username>
+                        <aut:password>$2</aut:password>
+						 <aut:remoteAddress>$3</aut:remoteAddress>
+					  </aut:login>
+				   </soapenv:Body>
+				</soapenv:Envelope>
+            </format>
+            <args>            	 
+            	 <arg expression="get-property('wso2_IS_Admin')"/>
+            	 <arg expression="get-property('wso2_IS_password')"/>
+				 <arg expression="get-property('wso2_IS_localhost')"/>
+            </args>
+         	</payloadFactory>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>     
+			<send blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.base}{+uri.var.authenticationAdmin}"/>
+            	</endpoint>
+        	</send>	
+		</case>	
+		<case regex=".*/user/mobile/passwordRecovery?.*">
+			
+			<!-- WSO2 IS authorization -->
+			<header name="Authorization" expression="get-property('AuthorizationHeader')" scope="transport"/>
+			<!-- get the type request query parameter -->
+			<property name="uri.var.type" expression="$url:type"/>
+			<!-- check that the type query parameter has been defined -->
+			<filter source="boolean(get-property('uri.var.type'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory request query parameters not defined: type"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+			</filter>
+			<!-- get the notify request query parameter -->
+			<property name="uri.var.notify" expression="$url:notify"/>
+			<!-- check that the notify query parameter has been defined -->
+			<filter source="boolean(get-property('uri.var.notify'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory request query parameters not defined: notify"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+			</filter>
+			
+			<!-- Set the content type and message type to application/json -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<header name="Content-Type" value="application/json" scope="transport"/> 
+			<!-- get the uri for the password recovery API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_passRecovery')" scope="default" type="STRING"/>
+			<!-- get the callback url for password recovery from Synapse.xml -->
+			<property name="uri.var.callback" expression="get-property('wso2IsCallbackUrl')" scope="default" type="STRING"/>		
+			<!-- enrich the request payload by adding the properties array to the original request -->
+			<script language="js" key="conf:/enrichPasswordRecoveryRequest110.js" function="transform"/>
+				
+            <!-- send to the WSO2 IS to reset the password -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?type={+uri.var.type}&amp;notify={+uri.var.notify}"/>
+                </endpoint>
+            </send>                            
+		</case>
+		<!-- Logic for cas redirect requests -->
+		<case regex=".*/user/cas/redirect">
+			<!-- remove url postfix -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- check that x-sirs-location header parameter has been set -->
+			<filter source="boolean(get-property('transport', 'x-sirs-location'))" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Mandatory request header parameters not defined: x-sirs-location"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</then>
+			</filter>
+			<filter source="boolean(get-property('transport', 'x-sirs-sessionToken'))" regex="true">
+				<then>
+					<header name="Authorization" expression="fn:concat('Bearer ',get-property('transport', 'x-sirs-sessionToken'))" scope="transport"/>
+				</then>
+				<else>
+					<property action="remove" name="Authorization" scope="transport"/>
+				</else>
+			</filter>
+			<!-- set the content-type to application/json -->
+			<header name="Content-Type" value="application/json" scope="transport"/> 
+			<!-- get the x-sirs-location parameter -->
+			<property description="uri.var.redirection" name="uri.var.redirection" expression="get-property('transport', 'x-sirs-location')"/>
+			<property name="DISABLE_COOKIE" value="true" scope="axis2" type="BOOLEAN"/>
+			 
+			<!-- send the request to the actual redirection url -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.redirection}"/>
+                </endpoint>
+            </send>    
+		</case>
+		<!-- UAE Pass Login-->
+		<case regex=".*/user/mobile/uaePassLogin?.*">
+			<!-- get the WSO2 IS UAE Pass Mobile Service Provider consumer key -->
+    		<property name="uri.var.isuaepassconsumerkey" expression="get-property('wso2_is_uaepass_consumer_key')" scope="default" type="STRING"/> 			
+    		<!-- get the WSO2 IS UAE Pass Mobile Service Provider consumer secret -->
+    		<property name="uri.var.isuaepassconsumersecret" expression="get-property('wso2_is_uaepass_consumer_secret')" scope="default" type="STRING"/>			
+    		<!-- Concatenate the client key and client secret into the "is_sp_uaepass_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.isuaepassconsumerkey,':',$ctx:uri.var.isuaepassconsumersecret)" name="is_sp_uaepass_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:is_sp_uaepass_credentials))" name="is_sp_uaepass_auth_header" scope="default" type="STRING"/>
+    		<!-- set the Authorization header -->
+            <header name="Authorization" expression="get-property('is_sp_uaepass_auth_header')" scope="transport"/>
+            <!-- Remove the url postfix from the request uri -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- Get the authorization code request body json parameter -->
+			<property name="uri.var.authcode" expression="json-eval($.code)" scope="default" type="STRING"/>
+			<!-- Get the redirection url for uae pass login from synapse.xml -->
+			<property name="uri.var.redirecturi" expression="get-property('wso2IsUaePassCallbackUrl')" scope="default" type="STRING"/>
+			
+			<!-- Check that the authoriation code parameter is null  -->
+            <filter source="get-property('uri.var.authcode')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected code parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+			
+			<!-- Build the request body json for login to uae pass with authorization code grant -->
+			<payloadFactory media-type="xml">
+        	<format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                        <code>$2</code>
+                        <redirect_uri>$3</redirect_uri>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>            	
+				 <arg value="authorization_code"/>
+				 <arg expression="get-property('uri.var.authcode')"/>
+				 <arg expression="get-property('uri.var.redirecturi')"/>			           	 
+            </args>
+         	</payloadFactory>
+			<!-- Set the message type to application/x-www-form-urlencoded -->
+			<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+			<!-- disable chunking -->
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<!-- Get the uri for the oauth2/token API for WSO2 Identity server from synapse.xml -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_mobiletoken')" scope="default" type="STRING"/>
+			<!-- Send the oauth2/token request to WSO2 IS -->
+			<send blocking="true">
+            	<endpoint>
+					<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?scope=openid"/>
+            	</endpoint>
+        	</send>
+		</case>
+		
+		<!-- ########################### -->
+		<!-- setUserClaimValue API logic -->
+		<!-- ########################### -->
+		
+		<case regex=".*/user/setClaim">
+			<!-- Remove POSTFIX from request uri -->
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- Get JSON body request parameters -->
+			<property name="uri.var.username" expression="json-eval($.username)" scope="default" type="STRING"/>
+			<property name="uri.var.claimuri" expression="json-eval($.claimURI)" scope="default" type="STRING"/>
+			<property name="uri.var.claimvalue" expression="json-eval($.claimValue)" scope="default" type="STRING"/>
+			
+			<!-- ******************************************************* -->
+			<!-- ***** validate the JSON request body parameters ******* -->
+			<!-- ******************************************************* -->
+			
+			<!-- Check that the username parameter is null  -->
+            <filter source="get-property('uri.var.username')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected username parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the claimuri parameter is null  -->
+            <filter source="get-property('uri.var.claimuri')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected claimURI parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check that the claimvalue parameter is null  -->
+            <filter source="get-property('uri.var.claimvalue')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected claimValue parameter in request body"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/><loopback/>
+            	</then>
+            </filter>
+			
+			<!-- ************************************************* -->
+            <!-- *******   GET WSO2 AM ACCESS TOKEN   ************ -->
+            <!-- ************************************************* -->
+			
+			<!-- get the WSO2 API Manager admin user consumer key -->
+    		<property name="uri.var.amconsumerkey" expression="get-property('wso2_consumer_key')" scope="default" type="STRING"/> 			
+    		<!-- get the WSO2 API Manager admin user consumer secret -->
+    		<property name="uri.var.amconsumersecret" expression="get-property('wso2_consumer_secret')" scope="default" type="STRING"/>			
+    		<!-- Concatenate the client key and client secret into the "am_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.amconsumerkey,':',$ctx:uri.var.amconsumersecret)" name="am_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:am_credentials))" name="am_auth_header" scope="default" type="STRING"/>
+    		<!-- set the WSO2 Authorization header -->
+            <header name="Authorization" expression="get-property('am_auth_header')" scope="transport"/>
+			<!-- Create request body for token API in x-www-form-urlencoded format -->
+           	<payloadFactory media-type="xml">
+            <format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>
+            	 <arg value="client_credentials"/>
+            </args>
+         	</payloadFactory>
+         	<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+         	<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>         	
+         	<!-- Get the WSO@ token base url -->
+         	<property name="uri.var.amtokenbase" expression="get-property('base_url_wso2_token')" scope="default" type="STRING"/>
+         	<!-- Get the wso2 token API uri -->
+         	<property name="uri.var.amtokenuri" expression="get-property('uri_wso2_token')" scope="default" type="STRING"/>         	
+         	<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amtokenbase}{+uri.var.amtokenuri}"/>
+            	</endpoint>
+        	</call>
+        	<!-- get the WSO2 Access token and store it in "wso2_token" variable -->
+        	<property name="wso2_token" expression="//access_token/text()"/>
+        	<!-- set the Authorization header parameter to the WSO2 Access token -->
+            <header name="Authorization" expression="fn:concat('Bearer ',get-property('wso2_token'))" scope="transport"/>
+            
+            <!-- ************************************************* -->
+            <!-- *****   LOGIN TO WSO2 IS ADMIN SERVICES   ******* -->
+            <!-- ************************************************* -->
+            
+            <!-- get the uri for the WSO2 IS admin services logib API -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_stattoken')" scope="default" type="STRING"/>
+        	<!-- Get the wso2 API gateway base url -->
+         	<property name="uri.var.amgatewaybase" expression="get-property('base_url_wso2')" scope="default" type="STRING"/>
+         	<!-- send a call to the actual WSO2 IS Admin Services Login API -->			
+			<call blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.amgatewaybase}{+uri.var.uri}"/>
+            	</endpoint>
+        	</call>
+        	
+			<!-- Get response cookie header -->
+			<property name="Cookie" expression="$trp:Cookie"/>			
+			
+			<!-- ************************************************* -->
+            <!-- **   CALL THE WSO2 IS SETUSERCLAIMVALUE API   *** -->
+            <!-- ************************************************* -->
+			
+			<!-- Set header information -->
+			<header name="Content-Type" value="text/xml" scope="transport"/>
+			<property name="uri.var.soapaction" expression="get-property('soap_action_is_setclaims')" scope="default" type="STRING"/>
+			<header name="SOAPAction" expression="get-property('uri.var.soapaction')" scope="transport"/>
+			<header name="Cookie" expression="get-property('Cookie')" scope="transport"/>
+			<header name="Authorization" expression="get-property('AuthorizationHeader')" scope="transport"/>
+			
+			<!-- Request payload -->
+           	<payloadFactory media-type="xml">
+            <format>
+				<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://service.ws.um.carbon.wso2.org">
+   					<soapenv:Header/>
+   					<soapenv:Body>
+      					<ser:setUserClaimValue>
+         					<ser:userName>$1</ser:userName>
+         					<ser:claimURI>$2</ser:claimURI>
+         					<ser:claimValue>$3</ser:claimValue>
+      					</ser:setUserClaimValue>
+   					</soapenv:Body>
+				</soapenv:Envelope>
+            </format> 
+            <args>            	 
+				 <arg expression="get-property('uri.var.username')"/>
+				 <arg expression="get-property('uri.var.claimuri')"/>
+				 <arg expression="get-property('uri.var.claimvalue')"/>
+            </args>
+         	</payloadFactory>
+         	<!-- Get the uri of the wso2 is admin services set user claim value API -->
+         	<property name="uri.var.setclaimvalueuri" expression="get-property('uri_IS_setUserClaimValues')" scope="default" type="STRING"/>
+         				
+			<!-- Send mediator -->
+			<send blocking="true">
+            	<endpoint>
+                	<http method="POST" uri-template="{+uri.var.base}{+uri.var.setclaimvalueuri}"/> 
+            	</endpoint>
+        	</send>			
+		</case>
+		<!-- logic for refresh login api -->
+		<case regex=".*/user/refresh.*">
+			
+			<!-- Get the userID request query parameter and store it in uri.var.userid property as a string -->
+        	<property description="uri.var.logintype" expression="$url:logintype" name="uri.var.logintype" scope="default" type="STRING"/>
+			
+			<switch source="get-property('uri.var.logintype')">
+        		<case regex="uaepassmobile">
+    				<property name="uri.var.isconsumerkey" expression="get-property('wso2_is_uaepass_consumer_key')" scope="default" type="STRING"/> 			
+    				<property name="uri.var.isconsumersecret" expression="get-property('wso2_is_uaepass_consumer_secret')" scope="default" type="STRING"/>			
+        		</case>
+        		<case regex="uaepassweb">
+    				<property name="uri.var.isconsumerkey" expression="get-property('wso2_is_uaepass_web_consumer_key')" scope="default" type="STRING"/> 			
+    				<property name="uri.var.isconsumersecret" expression="get-property('wso2_is_uaepass_web_consumer_secret')" scope="default" type="STRING"/>
+        		</case>
+        		<case regex="standard">
+    				<property name="uri.var.isconsumerkey" expression="get-property('wso2_is_consumer_key')" scope="default" type="STRING"/> 			
+    				<property name="uri.var.isconsumersecret" expression="get-property('wso2_is_consumer_secret')" scope="default" type="STRING"/>
+        		</case>
+        		<default>
+        			<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected query parameter in request: logintype"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+        		</default>
+    		</switch>
+    						
+			<!-- Concatenate the client key and client secret into the "is_credentials" variable -->
+			<property expression="fn:concat($ctx:uri.var.isconsumerkey,':',$ctx:uri.var.isconsumersecret)" name="is_credentials" scope="default" type="STRING"/>
+    		<!-- Base 64 encode the credentials and add "Basic" prefix. -->
+    		<property expression="fn:concat('Basic ', base64Encode($ctx:is_credentials))" name="is_auth_header" scope="default" type="STRING"/>
+    		<!-- set the Authorization header -->
+            <header name="Authorization" expression="get-property('is_auth_header')" scope="transport"/>
+            <!-- Remove the url postfix from the request uri -->
+            <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<!-- Get the refresh_token request body json parameter -->
+			<property name="uri.var.refreshtoken" expression="json-eval($.refresh_token)"/>
+			
+			<!-- Check that the refresh_token parameter is null  -->
+            <filter source="get-property('uri.var.refreshtoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Expected refresh_token parameter in request body"}</format>
+                		<args></args>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+			
+			<!-- Build the request body json for refresh api -->
+			<payloadFactory media-type="xml">
+        	<format>
+               <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+                  <soapenv:Body>
+                     <root xmlns="">
+                        <grant_type>$1</grant_type>
+                        <refresh_token>$2</refresh_token>
+                     </root>
+                  </soapenv:Body>
+               </soapenv:Envelope>
+            </format>
+            <args>            	
+				 <arg value="refresh_token"/>
+				 <arg expression="get-property('uri.var.refreshtoken')"/>			           	 
+            </args>
+         	</payloadFactory>
+			<!-- Set the message type to application/x-www-form-urlencoded -->
+			<property name="messageType" value="application/x-www-form-urlencoded" scope="axis2" type="STRING"/>
+			<!-- disable chunking -->
+			<property name="DISABLE_CHUNKING" value="true" scope="axis2" type="STRING"/>
+			<!-- Get the uri for the oauth2/token API for WSO2 Identity server from synapse.xml -->
+			<property name="uri.var.uri" expression="get-property('uri_IS_mobiletoken')" scope="default" type="STRING"/>
+			<!-- Send the oauth2/token request to WSO2 IS -->
+			<call blocking="true">
+            	<endpoint>
+					<http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?scope=openid"/>
+            	</endpoint>
+        	</call>
+        	<property name="messageType" value="application/json" scope="axis2" type="STRING"/>
+        	
+        	<!-- get the wso2 identity server access token -->
+            <property description="uri.var.istoken" expression="json-eval($.access_token)" name="uri.var.istoken"/>
+            <property description="uri.var.isidtoken" expression="json-eval($.id_token)" name="uri.var.isidtoken"/>
+            <property description="uri.var.refresh" expression="json-eval($.refresh_token)" name="uri.var.refresh"/>
+            
+            <!-- Check if a valid identity server token was returned  -->
+            <filter source="get-property('uri.var.istoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to login with provided credentials"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="401" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- Check if a valid jwt token was returned  -->
+            <filter source="get-property('uri.var.isidtoken')" regex="null">
+            	<then>
+            		<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Failed to login with provided credentials"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="401" scope="axis2"/>
+            		<loopback/>
+            	</then>
+            </filter>
+            
+            <!-- decode the id token and get the user claims -->            
+            <script language="js" key="conf:/decodeJWTToken.js" function="transform"/>
+            <property expression="base64Decode($ctx:uri.var.tokenidclaims)" name="uri.var.decodedtokenidclaims" scope="default" type="STRING"/>
+            
+            <!-- construct the response to send back to the client -->
+            <payloadFactory media-type="json">
+            	<format>
+            	{
+					"access_token" : "$1",
+					"refresh_token" : "$2",
+					"id_token" : "$3",
+					"id_token_claims" : $4
+				}
+            	</format>
+            	<args>
+            		<arg expression="get-property('uri.var.istoken')"/>
+            		<arg expression="get-property('uri.var.refresh')"/>
+            		<arg expression="get-property('uri.var.isidtoken')"/>
+            		<arg expression="get-property('uri.var.decodedtokenidclaims')"/>
+            	</args>
+         	</payloadFactory>
+            <property name="HTTP_SC" value="200" scope="axis2"/>
+            
+            <!-- enrich payload -->
+			<enrich>
+				<source type="body"/>
+				<target type="property" property="payload"/>
+			</enrich>
+            
+            <!-- ************************************************* -->
+            <!-- ******* CALL LIFERAY CREATE USER API ************ -->
+            <!-- ************************************************* -->
+			
+			<payloadFactory media-type="json">
+				<format>{
+						"firstName":"$1",
+						"lastName":"$2",
+						"emailAddress":"$3",
+						"userRoles":[ "MBRL Library Member"],
+						"gender":"$4",
+						"userUniqueId":"$5"
+						}
+				</format>
+				<args>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.given_name)"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.family_name)"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.sub)"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.gender)"/>
+					<arg evaluator="json" expression="json-eval($.id_token_claims.userID)"/>
+				</args>
+			</payloadFactory>
+			
+			<!-- get the uri for the sync liferay user API -->
+			<property name="uri.var.liferay.uri" expression="get-property('uri_IS_liferayusersync')" scope="default" type="STRING"/>
+			<!-- Get the liferay API gateway base url -->
+			<property name="uri.var.liferay.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			<call blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.liferay.base}{+uri.var.liferay.uri}"/>
+                </endpoint>
+            </call>
+            
+			 <property description="statusCode" expression="json-eval($.statusCode)" name="statusCode" scope="default" type="STRING"/>
+			<filter source="get-property('statusCode')" regex="200">
+				<then>
+            		<property name="HTTP_SC" value="200" scope="axis2"/>
+					<!-- Get enrich paylaod-->
+					<enrich description="Restore original payload">
+						<source clone="false" property="payload" type="property"/>
+						<target type="body"/>
+					</enrich>
+            	</then>
+				<else>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 500, "statusMsg" : "Failed to create/update user in Liferay"}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="500" scope="axis2"/>
+				</else>
+            </filter>
+            <loopback/>
+		</case>
+		
+		<default>
+			<payloadFactory media-type="json">
+				<format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+				<args/>
+			</payloadFactory>
+			<property name="HTTP_SC" value="404" scope="axis2"/>
+			<loopback/>
+		</default>
+	</switch>
+</sequence>

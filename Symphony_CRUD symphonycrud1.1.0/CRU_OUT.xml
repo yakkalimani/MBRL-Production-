@@ -1,0 +1,77 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="CRU_OUT">
+	<property expression="get-property('requestURL')" name="request" scope="transport" type="STRING"/>
+	<filter source="get-property('transport', 'request')" regex="/patron/create">
+		 <then>
+        	<property name="messageType" value="application/json" scope="axis2"/>
+        	<property name="responseText" expression="json-eval($.Envelope.Body.CreatePatronResponse.CreatePatronResult)" type="STRING"/>
+        	<script language="js" key="conf:/cruCreatePatronParseResponse.js" function="transform"/>
+        	<property name="HTTP_SC" expression="get-property('result_code')" scope="axis2"/>
+        </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex="/patron/update">
+		 <then>
+		 	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+				<then>
+        			<property name="messageType" value="application/json" scope="axis2"/>
+        			<property name="responseText" expression="json-eval($.Envelope.Body.UpdatePatronResponse.UpdatePatronResult)" type="STRING"/>
+        			<script language="js" key="conf:/cruUpdatePatronParseResponse.js" function="transform"/>
+        			<property name="HTTP_SC" expression="get-property('result_code')" scope="axis2"/>
+        		</then>
+        	</filter>
+        </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/patron/extendedInfo?.*">
+		 <then>
+		 	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+				<then>
+        			<property name="messageType" value="application/json" scope="axis2"/>
+        			<property name="responseText" expression="json-eval($.Envelope.Body.SearchResponse.SearchResult.Result)" type="STRING"/>
+        			<script language="js" key="conf:/cruSearchPatronParseResponse.js" function="transform"/>
+        			<property name="HTTP_SC" expression="get-property('result_code')" scope="axis2"/>
+        		</then>
+        	</filter>
+        </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/getLookups?.*">
+		 <then>
+		 	<filter source="boolean(get-property('uri.var.field'))" regex="false">
+		 		<then>
+		 			<script language="js" key="conf:/consolidateCruLookupsResponses.js" function="transform"/>
+		 			<cache collector="true"/>					
+		 		</then>
+		 		<else>
+        			<property name="messageType" value="application/json" scope="axis2"/>
+        			<property name="responseText" expression="json-eval($.Envelope.Body.getLookupsResponse.getLookupsResult.ThreeFieldElement)" type="STRING"/>
+       				<script language="js" key="conf:/cruLookupsParseResponse.js" function="transform"/>
+       				<property name="HTTP_SC" expression="get-property('result_code')" scope="axis2"/>
+       			</else>
+       		</filter>
+        </then>
+	</filter>
+
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+        <then>
+        	<send/>
+        </then>
+        <else>
+        	<property name="error_message_1" expression="json-eval($.statusMsg)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<property name="error_message_2" expression="json-eval($.statusCode)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>        			
+        		</then>
+					<else>      			
+					<filter regex="false" source="get-property('error_message_2_bool')">
+        				<then>
+        					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+        				</then>
+        			</filter>
+					</else>
+        	</filter>
+        	<sequence key="customErrorHandling"/>
+        </else>
+    </filter>
+	<send/>
+</sequence>

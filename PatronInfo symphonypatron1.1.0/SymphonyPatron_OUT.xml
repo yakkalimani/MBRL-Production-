@@ -1,0 +1,47 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="SymphonyPatron_OUT">
+	<!-- get the request URI for the request being called -->
+	<property expression="get-property('requestURL')" name="request" scope="transport" type="STRING"/>
+	<!-- if the request is directed to lookupPatronInfo, then run a script to transform the response. -->
+	<filter source="get-property('transport', 'request')" regex=".*/info?.*">
+		 <then>
+		 	<script language="js" key="conf:/patronInfoResponseTransform.js" function="transform"/>
+		 </then>
+	</filter>
+	<filter source="get-property('transport', 'request')" regex=".*/requests.*">
+		 <then>
+		 	<script language="js" key="conf:/enrichPatronRequestResponse.js" function="transform"/>
+		 </then>
+	</filter>
+	<!-- check that the response from the symphony endpoint is 200 -->	
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+        <then> 
+        	<!-- check for the existence in the response of faultResponse json element -->       
+        	<property name="error_message_1" expression="json-eval($.faultResponse)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<!-- set the faultMsg to the response $.faultResponse.code response element -->
+        			<property expression="json-eval($.faultResponse.string)" name="faultMsg" type="STRING"/>
+        			<!-- call the customErrorHandling custom fault sequence to handle the erorr -->
+        			<sequence key="customErrorHandling"/>
+        		</then>			
+        	</filter>        	
+        </then>
+        <!-- else the API returned a none 200 response -->
+        <else>
+        	<!-- check for the existence of $.statusMsg in the response -->
+        	<property name="error_message_1" expression="json-eval($.statusMsg)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<!-- if $.statusMsg exists, then set the faultMsg accordingly -->
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+        		</then>
+        	</filter>
+        	<!-- call the customErrorHandling custom fault sequence to handle the erorr -->
+        	<sequence key="customErrorHandling"/>
+        </else>
+    </filter>	
+	<send/>
+</sequence>
+

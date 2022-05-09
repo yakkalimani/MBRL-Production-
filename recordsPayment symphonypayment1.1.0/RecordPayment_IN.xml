@@ -1,0 +1,42 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="RecordPayment_IN">
+    <property name="requestURL" expression="get-property('axis2', 'REST_URL_POSTFIX')"/>	
+    <switch source="get-property('To')">
+    	<case regex=".*/record.*">
+    		<filter source="boolean($trp:x-sirs-sessionToken)" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Missing header parameter: x-sirs-sessionToken"}</format>
+                	<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<respond/>
+				</then>
+		   	</filter>
+		   	<filter source="boolean($trp:x-sirs-clientID)" regex="false">
+				<then>
+					<payloadFactory media-type="json">
+                	<format>{"statusCode": 400, "statusMsg" : "Missing header parameter: x-sirs-clientID"}</format>
+                	<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<respond/>
+				</then>
+		   	</filter>
+			<property name="uri.var.base" expression="get-property('base_url_nginx_symphony')" scope="default" type="STRING"/>
+			<property name="uri.var.uri" expression="get-property('uri_nginx_symph_record')" scope="default" type="STRING"/>	
+    		<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}?selfPaid=true&amp;paidAtBillingLibrary=true&amp;json=true"/>
+                </endpoint>
+            </send>
+    	</case>
+    	<default>
+            <payloadFactory media-type="json">
+            	<format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+            	<args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/>
+            <respond/>
+        </default>
+    </switch>
+</sequence>

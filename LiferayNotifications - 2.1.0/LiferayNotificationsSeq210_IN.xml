@@ -1,0 +1,63 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LiferayNotificationsSeq210_IN">
+	<!-- Get the liferay base url -->
+	<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+	
+	<property name="faultUrl" expression="get-property('To')"/>
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="uri.var.locale" value="ar"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+   	<!-- Deterimine which URI is being Called -->
+   	<switch source="get-property('To')">
+       	<!-- Logic for RemoveToken list info API -->
+       	<case regex=".*/removeToken">
+			<!-- Set the message type to application/json -->			
+            <property name="messageType" value="application/json" scope="axis2"/>
+			<!-- Get the Liferay RemoveToken list info API URI -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_removeToken')" scope="default" type="STRING"/>			
+			<!-- get the token from the request body payload -->
+			<property name="token" expression="json-eval($.token)"/>
+			<!-- get the userId id from the request body payload -->
+			<property name="userId" expression="json-eval($.userId)"/>			
+			<!-- Set Accept to anything -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- set request JSON payload of the message -->
+			<payloadFactory media-type="json">
+				<format>
+				{
+					"token":"$1",
+					"userUniqueId":"$2"
+				}
+				</format>
+				<args>
+					<arg evaluator="json" expression="$.token"/>
+					<arg evaluator="json" expression="$.userId"/>						   
+				</args>
+			</payloadFactory>			
+			<!-- send request to actual liferay backend end-point -->				
+			<send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}"/>
+                </endpoint>
+            </send>
+		</case>		
+        <!-- return error if none of the supported WSO2 endpoints for Push Notifications was called -->
+        <default>
+            <payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+        </default>
+    </switch>
+</sequence>

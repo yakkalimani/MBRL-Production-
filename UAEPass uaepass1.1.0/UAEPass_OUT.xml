@@ -1,0 +1,28 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="UAEPass_OUT">
+
+	<filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+        <then>
+        	<send/>
+        </then>
+        <else>
+        	<property name="error_message_1" expression="json-eval($.statusMsg)"/>
+        	<property name="error_message_1_bool" expression="get-property('error_message_1') = 'null'"/>
+        	<property name="error_message_2" expression="json-eval($.statusCode)"/>
+        	<property name="error_message_2_bool" expression="get-property('error_message_2') = 'null'"/>
+        	<filter regex="false" source="get-property('error_message_1_bool')">
+        		<then>
+        			<property expression="get-property('error_message_1')" name="faultMsg" type="STRING"/>
+        		</then>
+					<else>      			
+					<filter regex="false" source="get-property('error_message_2_bool')">
+        				<then>
+        					<property expression="get-property('error_message_2')" name="faultMsg" type="STRING"/>
+        				</then>
+        			</filter>
+					</else>
+        	</filter>
+        	<sequence key="customErrorHandling"/>
+        </else>
+    </filter>	
+	<send/>
+</sequence>

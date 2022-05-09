@@ -1,0 +1,167 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LiferayEvent210_IN">
+	<!-- get the client ID Header Parameter -->
+	<property name="uri.var.clientid" expression="get-property('transport', 'x-sirs-clientID')"/>
+	<!-- get the x-sirs-locale header parameter -->
+	<property name="uri.var.locale" expression="get-property('transport', 'x-sirs-locale')"/>
+	
+	<property name="URL_INFO" expression="get-property('To')"/>
+	
+	<!-- derive the loacle header parameter based on the passed x-sirs-locale header value -->
+	<switch source="get-property('transport', 'x-sirs-locale')">
+		<case regex="en_US|en">
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</case>
+		<case regex="ar_SA|ar">
+			<property name="uri.var.locale" value="ar"/>
+			<property name="faultLang" value="ar"/>
+		</case>
+		<default>
+			<property name="uri.var.locale" value="en"/>
+			<property name="faultLang" value="en"/>
+		</default>
+	</switch>
+	<!-- remove the x-sirs-locale header parameter -->
+	<property action="remove" name="x-sirs-locale" scope="transport"/>
+	
+	<!-- determine the called API -->
+	<switch source="get-property('To')">
+		<!-- logic for Event Details API -->
+		<case regex=".*/eventDetail/.*">
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- get the article id url parameter -->
+			<property name="uri.var.articleId" expression="get-property('uri.var.articleId')"/>
+			<!-- get the Liferay Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+			<!-- get the event details URI -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_eventDetails')" scope="default" type="STRING"/>
+			<!-- send to the actual endpoint -->
+			<send blocking="true">
+				<endpoint>
+					<http method="GET" uri-template="{+uri.var.base}/o/mbrl-rest/getEventDetail?locale={uri.var.locale}&amp;articleId={uri.var.articleId}"/>
+				</endpoint>
+			</send>
+		</case>
+		<!-- logic for eventListing -->
+		<case regex=".*/eventListInfo?.*">
+			<!-- get the article Id url parameter -->
+			<property name="uri.var.articleId" expression="get-property('uri.var.articleId')"/>
+			<!-- get the Liferay Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+			<!-- get the event listing URI -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_eventListings')" scope="default" type="STRING"/>
+			<!-- Set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- send to the actual endpoint -->
+			<send blocking="true">
+				<endpoint>
+					<http method="GET" uri-template="{+uri.var.base}/o/mbrl-rest/getEventList?locale={uri.var.locale}"/>
+				</endpoint>
+			</send>
+		</case>
+		<!-- logic for other events -->
+		<case regex=".*/otherEvents?.*">
+			<!-- get the Liferay Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+			<!-- get the other events API URI -->
+			<property name="uri.var.uri" expression="get-property('uri_lr_otherEvents')" scope="default" type="STRING"/>
+			<!-- Set the accept header -->
+			<header name="Accept" value="*/*" scope="transport"/>
+			<!-- get the group id url parameter -->
+			<property name="uri.var.groupId" expression="$url:groupId"/>
+			<!-- get the article id url parameter -->
+			<property name="uri.var.articleId" expression="$url:articleId"/>
+			<!-- Call the actual endpoint -->
+			<send blocking="true">
+				<endpoint>
+					<http method="GET" uri-template="{+uri.var.base}/o/mbrl-rest/getOtherEventList?locale={uri.var.locale}&amp;groupId={uri.var.groupId}&amp;articleId={uri.var.articleId}"/>
+				</endpoint>
+			</send>
+		</case>
+		<case regex=".*/sync?.*">
+			<!-- get the Liferay Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+			<!-- Call the actual endpoint -->
+            <send blocking="true">
+                <endpoint>
+                    <http method="POST" uri-template="{+uri.var.base}/o/events/addEventArticle"/>
+                </endpoint>
+            </send>
+		</case>
+		<!-- Logic for myEvents URI -->
+		<case regex=".*/myEvents?.*">
+			<!-- get the Liferay Base URL -->
+			<property name="uri.var.base" expression="get-property('base_url_liferay')" scope="default" type="STRING"/>
+			
+			<!-- Set the message type to json and remove postfix -->
+			<property name="messageType" value="application/json" scope="axis2"/>
+			<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			
+			<!-- get the userid query parameter -->
+			<property name="uri.var.userId" expression="$url:userId"/>
+			<property name="uri.var.elbase" expression="get-property('base_url_eloqua')" scope="default" type="STRING"/>
+			<property name="uri.var.eluri" expression="get-property('uri_eloqua_eventhistory')" scope="default" type="STRING"/>
+			<property name="uri.var.elauth" expression="get-property('eloqua_auth')" scope="default" type="STRING"/>
+			<property expression="fn:concat('Basic ', $ctx:uri.var.elauth)" name="eloqua_auth_header" scope="default" type="STRING"/>
+			<header name="Authorization" expression="get-property('eloqua_auth_header')" scope="transport"/>
+            <header name="Accept" value="application/json" scope="transport"/>
+			
+			<!-- Call the eloqua event history endpoint to get the list of events the user is registered for -->
+			<call blocking="true">
+				<endpoint>
+					<http method="GET" uri-template="{+uri.var.elbase}{+uri.var.eluri}?q=ContactEmailAddress_c={+uri.var.userId}"/>
+				</endpoint>
+			</call>
+			
+			<!-- Check that the response from the Eloqua Event History API is successful -->
+			 <filter source="get-property('axis2', 'HTTP_SC')" regex="200">
+				<then>
+					<!-- Store the response from Eloqua Event History API into property called eloqua_event_history_response -->
+					<property name="eloqua_event_history_response" expression="json-eval($.)" scope="default" type="STRING"/>
+			
+					<!-- storing the eloqua event history API response in dictionary format -->
+			 		<script language="js" key="conf:/parseEloquaEventHistoryResponse.js" function="transform"/>
+			
+					<!-- Check that the response from Eloqua Event History API is empty -->
+					<filter source="get-property('eloquaEventHistoryResponse')" regex="null">
+            			<then>
+            				<payloadFactory media-type="json">
+                				<format>[]</format>
+                				<args/>
+            				</payloadFactory>
+            				<property name="HTTP_SC" value="200" scope="axis2"/>
+            				<respond/>
+            			</then>
+            		</filter>
+			
+					<!-- Set the message type to json and remove postfix -->
+					<property name="messageType" value="application/json" scope="axis2"/>
+					<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+			
+					<!-- Call the liferay endpoint for user event listing -->
+					<send blocking="true">
+                		<endpoint>
+                    		<http method="GET" uri-template="{+uri.var.base}/o/mbrl-rest/getEventList?locale={uri.var.locale}"/>
+                		</endpoint>
+            		</send>         
+				</then>
+				<else>
+					<payloadFactory media-type="json">
+                		<format>{"statusCode": 400, "statusMsg" : "Call to Eloqua Event History API has failed."}</format>
+                		<args/>
+            		</payloadFactory>
+            		<property name="HTTP_SC" value="400" scope="axis2"/>
+            		<loopback/>
+				</else>
+			</filter>
+		</case>
+		<!-- Incase any other resource has been requested -->
+		<default>
+			<payloadFactory media-type="json">
+                <format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+                <args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/><loopback/>
+		</default>
+	</switch>
+</sequence>

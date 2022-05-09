@@ -1,0 +1,4 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LifeRayCampgnOUT">
+    <property name="messageType" value="application/json" scope="axis2"/>
+    <send/>
+</sequence>

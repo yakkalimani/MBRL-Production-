@@ -1,0 +1,64 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="NdsBookImages_IN">
+		
+	<property name="responseText" expression="json-eval($.request.identifier)" type="STRING"/>
+	<property name="res" expression="json-eval($.)" type="STRING"/>
+	
+		<script language="js"><![CDATA[
+			var log = mc.getServiceLog(); 		
+			var request = mc.getProperty('res');
+			var resuestJson = JSON.parse(request);
+			var finalReq = '{ "bookCoverList": ['
+		
+			for(var i = 0; i < resuestJson.request.length; i++){
+				finalReq = finalReq +'{ "documentId": "'+resuestJson.request[i].identifier+'" },';
+			}
+			finalReq = finalReq.toString();
+			var newfinalReq = finalReq.slice(0, -1);
+  			newfinalReq = newfinalReq + "]}";
+  			mc.setProperty('newfinalReq', newfinalReq.toString());
+			mc.setPayloadJSON(newfinalReq.toString());
+  		
+		]]>
+	 </script>
+	<property name="final_Req" expression="get-property('newfinalReq')" type="STRING"/>
+	
+	<log level="full">
+	<property name="responseText" expression="json-eval($.)" type="STRING"/>
+	<property name="finalReq" expression="get-property('final_Req')" type="STRING"/>
+	</log>
+	
+    <switch source="get-property('To')">
+    	<case regex=".*/images">
+    		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    		<property name="messageType" value="application/json" scope="axis2"/>
+			 <property name="uri.var.base" expression="get-property('base_url_image')" scope="default" type="STRING"/>
+			 <property name="uri.var.uri" expression="get-property('uri_image')" scope="default" type="STRING"/>
+			 <property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    		<send blocking="true">
+                <endpoint>
+                   <http method="POST" uri-template="https://us-central1-mbrl-63a2e.cloudfunctions.net/itemImages"/> 				   
+                </endpoint>
+            </send>
+    	</case>
+		<case regex=".*/images/.*">
+    		<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+    		<property name="messageType" value="application/json" scope="axis2"/>
+			 <property name="uri.var.base" expression="get-property('base_url_nds')" scope="default" type="STRING"/>
+			 <property name="uri.var.uri" expression="get-property('uri_nds_image')" scope="default" type="STRING"/>			
+    		<send blocking="true">
+                <endpoint>
+				    <http method="POST" uri-template="{+uri.var.base}{+uri.var.uri}/{+uri.var.size}"/>
+                </endpoint>
+            </send>
+    	</case>
+		
+    	<default>
+            <payloadFactory media-type="json">
+            	<format>{"statusCode": 404, "statusMsg" : "Requested resource not found"}</format>
+            	<args/>
+            </payloadFactory>
+            <property name="HTTP_SC" value="404" scope="axis2"/>
+            <respond/>
+        </default>
+    </switch>
+</sequence>

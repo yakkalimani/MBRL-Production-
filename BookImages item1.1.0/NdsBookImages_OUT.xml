@@ -1,0 +1,34 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="NdsBookImages_OUT">
+
+	<property name="responseText2" expression="json-eval($.)" type="STRING"/>
+	
+	<log level="full">
+		<property name="responseText2" expression="json-eval($.)" type="STRING"/>		
+	</log>
+	
+			<script language="js"><![CDATA[
+			var log = mc.getServiceLog(); 		
+			var request = mc.getProperty('responseText2');
+			var resuestJson = JSON.parse(request);
+			var finalRes = '{ "results": ['
+			var image;			
+			for(var i = 0; i < resuestJson.length; i++){
+				if(resuestJson[i].thumbnail == "no_image"){					
+					image = "";
+				}else{
+					image = resuestJson[i].thumbnail;
+				}
+				
+				finalRes = finalRes +'{ "identifier": "'+resuestJson[i].documentId+'", "image": "'+image+'" },';
+			}
+			finalRes = finalRes.toString();
+			var newfinalReq = finalRes.slice(0, -1);
+  			newfinalReq = newfinalReq + "]}";
+  			mc.setProperty('newfinalReq', newfinalReq.toString());
+			mc.setPayloadJSON(newfinalReq.toString());
+  		
+		]]>
+	 </script>
+
+	<send/>
+</sequence>

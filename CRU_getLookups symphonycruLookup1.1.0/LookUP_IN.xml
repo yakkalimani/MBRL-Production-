@@ -1,0 +1,34 @@
+<sequence xmlns="http://ws.apache.org/ns/synapse" name="LookUP_IN">
+
+<header description="SOAPAction" name="SOAPAction" scope="transport" value="http://tempuri.org/IPatrons/getLookups"/>
+
+<property name="Field" expression="$url:Field"/>
+<property name="Lang" expression="$url:Lang"/>
+<property name="REST_URL_POSTFIX" scope="axis2" action="remove"/>
+
+<payloadFactory description="transform" media-type="xml">
+  <format>
+
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <tem:getLookups>
+         <!--Optional:-->
+         <tem:Field>$1</tem:Field>
+         <!--Optional:-->
+         <tem:Lang>$2</tem:Lang>
+      </tem:getLookups>
+   </soapenv:Body>
+</soapenv:Envelope>
+
+</format>
+  
+  <args>
+    <arg expression="$url:Field"/>
+    <arg expression="$url:Lang"/>
+  </args>
+</payloadFactory>
+
+<property description="messageProperty" name="messageType" scope="axis2" type="STRING" value="application/soap+xml"/>
+
+</sequence>
